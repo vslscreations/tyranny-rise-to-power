@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Tyranny: Rise to Power mobile interface prototype with a branded lock screen and home screen."
+    />
+    <title>Tyranny: Rise to Power</title>
+    <link rel="stylesheet" href="./scipt.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <div class="phone-shell" aria-label="Tyranny phone interface">
+        <div class="status-bar" aria-label="Status bar">
+          <div class="status-left" id="clockLabel">9:41</div>
+          <div class="status-center" aria-label="Connectivity status">
+            <span class="signal-bars" aria-hidden="true">
+              <span class="bar bar-1"></span>
+              <span class="bar bar-2"></span>
+              <span class="bar bar-3"></span>
+              <span class="bar bar-4"></span>
+            </span>
+            <span class="wifi-icon" aria-hidden="true"></span>
+          </div>
+          <div class="status-right">
+            <span class="wallet-symbol" aria-hidden="true">◈</span>
+            <span class="wallet-balance" id="walletBalance">$8,420</span>
+            <span class="battery-wrap" aria-label="Battery charge">
+              <span class="battery-level"></span>
+            </span>
+          </div>
+        </div>
+
+        <div class="notch" aria-hidden="true"></div>
+
+        <main class="phone-screen" aria-live="polite">
+          <section id="lock-screen" class="screen screen-lock" aria-label="Lock screen">
+            <div class="lock-overlay"></div>
+            <div class="lock-card">
+              <div class="lock-welcome">Welcome back</div>
+              <div class="player-summary">
+                <div class="avatar avatar-large" id="lockAvatar" aria-label="Player avatar">AV</div>
+                <div class="player-text">
+                  <span class="player-name" id="lockName">Aurelia Voss</span>
+                  <span class="player-tag">United Front</span>
+                </div>
+              </div>
+
+              <div class="lock-portrait" aria-label="Tyranny wallpaper">
+                <div class="shield-mark">
+                  <span class="crown">♛</span>
+                </div>
+                <div class="title-block">
+                  <h1>TYRANNY</h1>
+                  <p>RISE TO POWER</p>
+                </div>
+              </div>
+
+              <div class="notification-preview-list" aria-label="Notification previews">
+                <div class="notification-chip">
+                  <span class="chip-label">Campaign</span>
+                  <span class="chip-copy">Neighborhood charter signed</span>
+                </div>
+                <div class="notification-chip muted">
+                  <span class="chip-label">Finance</span>
+                  <span class="chip-copy">Transfer confirmed</span>
+                </div>
+              </div>
+
+              <button id="unlockButton" class="unlock-button" type="button" aria-label="Tap to enter home screen">
+                Tap to Enter
+              </button>
+            </div>
+          </section>
+
+          <section id="home-screen" class="screen screen-home hidden" aria-label="Home screen">
+            <div class="home-wallpaper"></div>
+
+            <div class="home-content">
+              <div class="home-topline">
+                <div class="status-summary">
+                  <span class="wallet-token">◈</span>
+                  <span class="balance-value">$8,420</span>
+                </div>
+                <button id="notificationToggle" class="notification-button" type="button" aria-label="Open notification center">
+                  <span class="bell-icon" aria-hidden="true">◔</span>
+                  <span class="notification-bubble" id="notificationBubble">3</span>
+                </button>
+              </div>
+
+              <button id="profileWidget" class="profile-widget" type="button" aria-label="Open MyLife profile">
+                <div class="avatar avatar-medium" id="profileAvatar" aria-label="Player avatar">AV</div>
+                <div class="widget-copy">
+                  <span class="widget-name" id="profileName">Aurelia Voss</span>
+                  <span class="widget-role">Political Strategist</span>
+                </div>
+              </button>
+
+              <div id="appGrid" class="app-grid" aria-label="App icons"></div>
+            </div>
+          </section>
+
+          <div id="app-layer" class="app-layer" aria-live="polite"></div>
+
+          <button id="floatingHome" class="floating-home" type="button" aria-label="Return home">
+            <span aria-hidden="true">⌂</span>
+          </button>
+
+          <aside id="notificationCenter" class="notification-center hidden" aria-label="Notifications panel" aria-live="polite">
+            <div class="notification-header">
+              <h2>Notifications</h2>
+              <button id="closeNotifications" class="close-button" type="button" aria-label="Close notifications">×</button>
+            </div>
+            <div id="notificationList" class="notification-list"></div>
+          </aside>
+        </main>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
