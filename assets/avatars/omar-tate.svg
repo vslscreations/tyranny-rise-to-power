@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Omar Tate avatar">
+  <rect width="120" height="120" rx="24" fill="#171c24"/>
+  <circle cx="60" cy="42" r="23" fill="#af7a54"/>
+  <path d="M22 98c7-17 20-29 38-29s31 12 38 29" fill="#5fc3c3"/>
+  <path d="M30 42c4-18 19-30 33-30 20 0 32 13 35 30-8-8-19-12-32-12-19 0-29 5-36 12z" fill="#1d2f39"/>
+  <path d="M44 59h32l-3 14H47l-3-14z" fill="#e6c998" opacity="0.8"/>
+</svg>

@@ -36,7 +36,89 @@
         <div class="notch" aria-hidden="true"></div>
 
         <main class="phone-screen" aria-live="polite">
-          <section id="lock-screen" class="screen screen-lock" aria-label="Lock screen">
+          <section id="auth-screen" class="screen auth-screen" aria-label="Authentication screen">
+            <div class="auth-panel">
+              <div class="auth-brand">TYRANNY</div>
+              <div class="auth-header">
+                <h2>Citizen Access</h2>
+              </div>
+
+              <div id="loginForm" class="auth-form">
+                <form id="loginSubmitForm" novalidate>
+                  <label>
+                    <span>Email</span>
+                    <input id="loginEmail" type="email" name="email" autocomplete="email" placeholder="citizen@email.com" required />
+                  </label>
+                  <label>
+                    <span>Password</span>
+                    <input id="loginPassword" type="password" name="password" autocomplete="current-password" placeholder="Password" required />
+                  </label>
+                  <button type="submit" class="auth-button primary">Sign In</button>
+                </form>
+                <div class="auth-links">
+                  <button id="showRegister" type="button" class="text-link">Create account</button>
+                  <button id="showRecover" type="button" class="text-link">Forgot password?</button>
+                </div>
+              </div>
+
+              <div id="registerForm" class="auth-form hidden">
+                <form id="registerSubmitForm" novalidate>
+                  <label>
+                    <span>Email</span>
+                    <input id="registerEmail" type="email" name="email" autocomplete="email" placeholder="citizen@email.com" required />
+                  </label>
+                  <label>
+                    <span>Password</span>
+                    <input id="registerPassword" type="password" name="password" autocomplete="new-password" placeholder="Create password" required />
+                  </label>
+                  <label>
+                    <span>Confirm password</span>
+                    <input id="registerConfirmPassword" type="password" name="confirmPassword" autocomplete="new-password" placeholder="Confirm password" required />
+                  </label>
+                  <button type="submit" class="auth-button primary">Create Account</button>
+                </form>
+                <button id="backToLogin" type="button" class="text-link">Back to login</button>
+              </div>
+
+              <div id="recoverForm" class="auth-form hidden">
+                <form id="recoverSubmitForm" novalidate>
+                  <label>
+                    <span>Email</span>
+                    <input id="recoverEmail" type="email" name="email" autocomplete="email" placeholder="citizen@email.com" required />
+                  </label>
+                  <button type="submit" class="auth-button primary">Send Recovery Link</button>
+                </form>
+                <button id="recoverBackToLogin" type="button" class="text-link">Back to login</button>
+              </div>
+
+              <div id="newPasswordForm" class="auth-form hidden">
+                <form id="newPasswordSubmitForm" novalidate>
+                  <label>
+                    <span>New password</span>
+                    <input id="newPasswordInput" type="password" name="password" autocomplete="new-password" placeholder="Enter a new password" required />
+                  </label>
+                  <label>
+                    <span>Confirm new password</span>
+                    <input id="newPasswordConfirmInput" type="password" name="confirmPassword" autocomplete="new-password" placeholder="Confirm new password" required />
+                  </label>
+                  <button type="submit" class="auth-button primary">Update Password</button>
+                </form>
+                <button id="newPasswordBackToLogin" type="button" class="text-link">Back to login</button>
+              </div>
+
+              <div id="verify-screen" class="verify-panel hidden" aria-live="polite">
+                <div class="verify-icon">✓</div>
+                <h3>Verification pending</h3>
+                <p id="verifyEmailText">A verification email was sent.</p>
+                <button id="resendVerification" type="button" class="auth-button secondary">Resend Verification</button>
+                <button id="verifyBackToLogin" type="button" class="text-link">Return to login</button>
+              </div>
+
+              <div id="authMessage" class="auth-message" aria-live="polite"></div>
+            </div>
+          </section>
+
+          <section id="lock-screen" class="screen screen-lock hidden" aria-label="Lock screen">
             <div class="lock-overlay"></div>
             <div class="lock-card">
               <div class="lock-welcome">Welcome back</div>
@@ -99,6 +181,102 @@
               </button>
 
               <div id="appGrid" class="app-grid" aria-label="App icons"></div>
+
+              <div class="home-dock" aria-label="Home dock">
+                <button id="dockPhone" class="dock-button active" type="button" aria-label="Phone home">
+                  <span aria-hidden="true">◉</span>
+                </button>
+                <button id="dockMessages" class="dock-button" type="button" aria-label="Messages placeholder">
+                  <span aria-hidden="true">✉</span>
+                </button>
+                <button id="dockSettings" class="dock-button" type="button" aria-label="Settings">
+                  <span aria-hidden="true">⚙</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="settingsMenu" class="settings-menu hidden" aria-label="Settings menu">
+              <div class="settings-panel">
+                <div class="settings-header">
+                  <span>Settings</span>
+                  <button id="closeSettings" class="close-button" type="button" aria-label="Close settings">×</button>
+                </div>
+                <div class="settings-list">
+                  <button type="button" class="settings-item placeholder">Account</button>
+                  <button type="button" id="logoutButton" class="settings-item danger">Logout</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="citizenSetupScreen" class="screen citizen-setup-screen hidden" aria-label="Citizen setup screen">
+            <div class="citizen-setup-panel">
+              <div class="auth-brand">TYRANNY</div>
+              <div class="auth-header">
+                <h2>Citizen Setup</h2>
+              </div>
+
+              <form id="citizenSetupForm" novalidate>
+                <div class="citizen-name-row">
+                  <label>
+                    <span>First name</span>
+                    <input id="citizenFirstName" type="text" name="first_name" maxlength="32" placeholder="Aurelia" required />
+                  </label>
+                  <label>
+                    <span>Last name</span>
+                    <input id="citizenLastName" type="text" name="last_name" maxlength="32" placeholder="Voss" required />
+                  </label>
+                </div>
+
+                <div class="citizen-random-row">
+                  <button id="generateCitizenName" type="button" class="auth-button secondary">Generate Name</button>
+                </div>
+
+                <div>
+                  <span>Avatar</span>
+                  <div id="avatarPickerGrid" class="avatar-picker-grid" aria-label="Select built-in avatar">
+                    <button type="button" class="avatar-option selected" data-avatar-url="./assets/avatars/aurelia-voss.svg" aria-label="Aurelia Voss avatar">
+                      <img src="./assets/avatars/aurelia-voss.svg" alt="Aurelia Voss avatar" />
+                      <span>Aurelia Voss</span>
+                    </button>
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/jasper-reed.svg" aria-label="Jasper Reed avatar">
+                      <img src="./assets/avatars/jasper-reed.svg" alt="Jasper Reed avatar" />
+                      <span>Jasper Reed</span>
+                    </button>
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/mira-sloane.svg" aria-label="Mira Sloane avatar">
+                      <img src="./assets/avatars/mira-sloane.svg" alt="Mira Sloane avatar" />
+                      <span>Mira Sloane</span>
+                    </button>
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/dorian-kestrel.svg" aria-label="Dorian Kestrel avatar">
+                      <img src="./assets/avatars/dorian-kestrel.svg" alt="Dorian Kestrel avatar" />
+                      <span>Dorian Kestrel</span>
+                    </button>
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/leah-cortez.svg" aria-label="Leah Cortez avatar">
+                      <img src="./assets/avatars/leah-cortez.svg" alt="Leah Cortez avatar" />
+                      <span>Leah Cortez</span>
+                    </button>
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/omar-tate.svg" aria-label="Omar Tate avatar">
+                      <img src="./assets/avatars/omar-tate.svg" alt="Omar Tate avatar" />
+                      <span>Omar Tate</span>
+                    </button>
+                  </div>
+                  <input id="citizenAvatar" type="hidden" name="avatar" value="./assets/avatars/aurelia-voss.svg" />
+                </div>
+
+                <label>
+                  <span>Political party</span>
+                  <select id="citizenParty" name="party">
+                    <option value="Independent">Independent</option>
+                    <option value="United Front">United Front</option>
+                    <option value="People's Assembly">People's Assembly</option>
+                    <option value="Civic Order">Civic Order</option>
+                  </select>
+                </label>
+
+                <button type="submit" class="auth-button primary">Create Citizen</button>
+              </form>
+
+              <div id="citizenSetupMessage" class="auth-message" aria-live="polite"></div>
             </div>
           </section>
 
@@ -119,6 +297,9 @@
       </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js"></script>
+    <script src="./supabase-client.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

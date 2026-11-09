@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Leah Cortez avatar">
+  <rect width="120" height="120" rx="24" fill="#1b1d2b"/>
+  <circle cx="60" cy="42" r="23" fill="#d9a67d"/>
+  <path d="M24 98c7-18 22-30 36-30s29 12 36 30" fill="#f1d6a8"/>
+  <path d="M31 41c4-18 20-30 35-30 19 0 32 12 35 29-6-8-18-13-32-13-19 0-29 5-38 14z" fill="#3f2a26"/>
+  <circle cx="52" cy="43" r="3" fill="#312824"/>
+  <circle cx="67" cy="43" r="3" fill="#312824"/>
+  <path d="M53 58c4 5 10 5 14 0" fill="none" stroke="#7b503c" stroke-width="3" stroke-linecap="round"/>
+</svg>

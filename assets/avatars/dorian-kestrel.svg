@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Dorian Kestrel avatar">
+  <rect width="120" height="120" rx="24" fill="#1a1b26"/>
+  <circle cx="60" cy="42" r="24" fill="#b58d66"/>
+  <path d="M23 100c8-18 21-28 37-28s29 10 37 28" fill="#8eb7c4"/>
+  <path d="M27 45c4-17 18-30 35-30 17 0 32 11 36 30-7-9-17-13-31-13-20 0-29 7-40 13z" fill="#1b2d32"/>
+  <path d="M45 60h30l-3 13H48l-3-13z" fill="#f4d9a0" opacity="0.8"/>
+</svg>

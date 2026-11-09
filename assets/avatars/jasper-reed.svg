@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Jasper Reed avatar">
+  <rect width="120" height="120" rx="24" fill="#1a2430"/>
+  <circle cx="60" cy="44" r="24" fill="#d4a573"/>
+  <path d="M24 100c6-18 21-30 36-30s30 12 36 30" fill="#b0c4d8"/>
+  <path d="M33 42c3-17 20-31 37-31 18 0 30 13 34 30-7-8-18-12-32-12-19 0-29 6-39 13z" fill="#3b2c27"/>
+  <rect x="46" y="58" width="28" height="10" rx="5" fill="#ecf2fd" opacity="0.75"/>
+</svg>
