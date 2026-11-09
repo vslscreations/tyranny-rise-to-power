@@ -26,7 +26,7 @@
           </div>
           <div class="status-right">
             <span class="wallet-symbol" aria-hidden="true">◈</span>
-            <span class="wallet-balance" id="walletBalance">$8,420</span>
+            <span class="wallet-balance" id="walletBalance">Loading...</span>
             <span class="battery-wrap" aria-label="Battery charge">
               <span class="battery-level"></span>
             </span>
@@ -53,7 +53,7 @@
                     <span>Password</span>
                     <input id="loginPassword" type="password" name="password" autocomplete="current-password" placeholder="Password" required />
                   </label>
-                  <button type="submit" class="auth-button primary">Sign In</button>
+                  <button id="loginSubmitButton" type="submit" class="auth-button primary">Sign In</button>
                 </form>
                 <div class="auth-links">
                   <button id="showRegister" type="button" class="text-link">Create account</button>
@@ -120,40 +120,13 @@
 
           <section id="lock-screen" class="screen screen-lock hidden" aria-label="Lock screen">
             <div class="lock-overlay"></div>
-            <div class="lock-card">
-              <div class="lock-welcome">Welcome back</div>
-              <div class="player-summary">
-                <div class="avatar avatar-large" id="lockAvatar" aria-label="Player avatar">AV</div>
-                <div class="player-text">
-                  <span class="player-name" id="lockName">Aurelia Voss</span>
-                  <span class="player-tag">United Front</span>
-                </div>
+            <div class="lock-card" id="lockCard" tabindex="0" aria-label="Touch to start">
+              <div class="lock-time-wrap">
+                <div class="lock-time" id="lockTime">9:41</div>
+                <div class="lock-date" id="lockDate">Sunday, November 8</div>
               </div>
 
-              <div class="lock-portrait" aria-label="Tyranny wallpaper">
-                <div class="shield-mark">
-                  <span class="crown">♛</span>
-                </div>
-                <div class="title-block">
-                  <h1>TYRANNY</h1>
-                  <p>RISE TO POWER</p>
-                </div>
-              </div>
-
-              <div class="notification-preview-list" aria-label="Notification previews">
-                <div class="notification-chip">
-                  <span class="chip-label">Campaign</span>
-                  <span class="chip-copy">Neighborhood charter signed</span>
-                </div>
-                <div class="notification-chip muted">
-                  <span class="chip-label">Finance</span>
-                  <span class="chip-copy">Transfer confirmed</span>
-                </div>
-              </div>
-
-              <button id="unlockButton" class="unlock-button" type="button" aria-label="Tap to enter home screen">
-                Tap to Enter
-              </button>
+              <div class="lock-cta">Touch to start</div>
             </div>
           </section>
 
@@ -164,7 +137,7 @@
               <div class="home-topline">
                 <div class="status-summary">
                   <span class="wallet-token">◈</span>
-                  <span class="balance-value">$8,420</span>
+                  <span class="balance-value">Loading...</span>
                 </div>
                 <button id="notificationToggle" class="notification-button" type="button" aria-label="Open notification center">
                   <span class="bell-icon" aria-hidden="true">◔</span>
@@ -176,7 +149,7 @@
                 <div class="avatar avatar-medium" id="profileAvatar" aria-label="Player avatar">AV</div>
                 <div class="widget-copy">
                   <span class="widget-name" id="profileName">Aurelia Voss</span>
-                  <span class="widget-role">Political Strategist</span>
+                  <span class="widget-role" id="profileRole">Profile unavailable</span>
                 </div>
               </button>
 
@@ -230,6 +203,10 @@
 
                 <div class="citizen-random-row">
                   <button id="generateCitizenName" type="button" class="auth-button secondary">Generate Name</button>
+                </div>
+
+                <div class="auth-message warning" role="note">
+                  Choose your name carefully. Your public name is permanent and cannot be changed after your citizen profile is created.
                 </div>
 
                 <div>

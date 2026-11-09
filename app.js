@@ -1,11 +1,11 @@
 const player = {
   name: 'Aurelia Voss',
   avatarText: 'AV',
-  profession: 'Political Strategist',
-  className: 'Urban Elite',
-  education: 'Master of Public Policy',
+  profession: 'Profile unavailable',
+  className: 'Profile unavailable',
+  education: 'Profile unavailable',
   party: 'United Front',
-  balance: '$8,420',
+  balance: 'Loading...',
 };
 
 const builtInAvatarAssets = [
@@ -20,7 +20,9 @@ const builtInAvatarAssets = [
 const profileState = {
   citizen: null,
   private: null,
+  privateLoadError: null,
   isEditing: false,
+  citizenLoadToken: 0,
 };
 
 const appCatalog = {
@@ -172,8 +174,22 @@ function getCitizenAvatarUrl(citizen) {
   return './assets/avatars/aurelia-voss.svg';
 }
 
+function formatCurrency(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return 'Unavailable';
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(number);
+}
+
 function applyCitizenProfile(citizen) {
   if (!citizen) {
+    player.balance = 'Unavailable';
     return;
   }
 
@@ -185,15 +201,37 @@ function applyCitizenProfile(citizen) {
     player.party = citizen.political_party;
   }
 
+  if (profileState.private && profileState.private.balance !== undefined && profileState.private.balance !== null) {
+    player.balance = formatCurrency(profileState.private.balance);
+  } else if (profileState.private === null) {
+    player.balance = 'Unavailable';
+  } else {
+    player.balance = 'Loading...';
+  }
+
   player.avatarText = deriveAvatarText(player.name);
   renderPlayerDetails();
 }
 
 function renderPlayerDetails() {
   const activeAvatarUrl = getCitizenAvatarUrl(profileState.citizen || null);
+  const lockName = document.getElementById('lockName');
+  const profileName = document.getElementById('profileName');
+  const profileRole = document.getElementById('profileRole');
 
-  document.getElementById('lockName').textContent = player.name;
-  document.getElementById('profileName').textContent = player.name;
+  if (lockName) {
+    lockName.textContent = player.name;
+  }
+
+  if (profileName) {
+    profileName.textContent = player.name;
+  }
+
+  if (profileRole) {
+    const profession = profileState.private?.profession || 'Profile unavailable';
+    profileRole.textContent = profession;
+  }
+
   document.querySelectorAll('.avatar').forEach((avatar) => {
     if (activeAvatarUrl) {
       avatar.style.backgroundImage = `linear-gradient(135deg, rgba(18, 24, 28, 0.15), rgba(18, 24, 28, 0.05)), url("${activeAvatarUrl}")`;
@@ -203,7 +241,16 @@ function renderPlayerDetails() {
       avatar.textContent = player.avatarText;
     }
   });
-  document.getElementById('walletBalance').textContent = player.balance;
+
+  const walletBalance = document.getElementById('walletBalance');
+  if (walletBalance) {
+    walletBalance.textContent = player.balance;
+  }
+
+  const homeBalance = document.querySelector('.balance-value');
+  if (homeBalance) {
+    homeBalance.textContent = player.balance;
+  }
 }
 
 function renderAppGrid() {
@@ -265,14 +312,23 @@ function setClock() {
     minute: '2-digit',
   });
   const dateFormatter = new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
+    weekday: 'long',
+    month: 'long',
     day: 'numeric',
   });
 
+  const lockTime = document.getElementById('lockTime');
+  const lockDate = document.getElementById('lockDate');
+
   document.getElementById('clockLabel').textContent = formatter.format(now);
-  const lockDate = document.querySelector('.lock-welcome');
-  lockDate.textContent = `Welcome back · ${dateFormatter.format(now)}`;
+
+  if (lockTime) {
+    lockTime.textContent = formatter.format(now);
+  }
+
+  if (lockDate) {
+    lockDate.textContent = dateFormatter.format(now);
+  }
 }
 
 function ensureAppWindow(appId) {
@@ -306,40 +362,68 @@ async function loadCitizenProfile() {
   const supabase = getAuthClient();
   const session = (await supabase?.auth.getSession())?.data?.session;
 
+  player.balance = 'Loading...';
+  renderPlayerDetails();
+
   if (!supabase || !session?.user) {
+    player.balance = 'Unavailable';
+    renderPlayerDetails();
     return null;
   }
 
+  const loadToken = ++profileState.citizenLoadToken;
+
   const { data: citizen, error: citizenError } = await supabase
     .from('citizens')
-    .select('id, auth_user_id, citizen_id, public_name, avatar_url, political_party, created_at')
+    .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, political_party, registration_date, created_at')
     .eq('auth_user_id', session.user.id)
     .maybeSingle();
 
   if (citizenError && citizenError.code !== 'PGRST116') {
     console.error('citizen profile load failed', citizenError);
+    profileState.privateLoadError = 'Unable to load your citizen record.';
     return null;
   }
 
   if (!citizen) {
     profileState.citizen = null;
     profileState.private = null;
+    player.balance = 'Unavailable';
+    profileState.privateLoadError = 'No citizen record is linked to this account.';
+    renderPlayerDetails();
     return null;
   }
 
-  const { data: privateRecord, error: privateError } = await supabase
-    .from('citizen_private')
-    .select('citizen_id, profession, social_class, education, account_status, balance, privileges')
-    .eq('citizen_id', citizen.id)
-    .maybeSingle();
+  let privateRecord = null;
+  profileState.privateLoadError = null;
 
-  if (privateError && privateError.code !== 'PGRST116') {
+  try {
+    const { data, error } = await supabase.functions.invoke('get-citizen-profile');
+    if (error) {
+      throw error;
+    }
+    privateRecord = data || null;
+  } catch (privateError) {
     console.error('citizen private profile load failed', privateError);
+    profileState.privateLoadError = 'Unable to load private profile details. Please retry.';
+    privateRecord = null;
+  }
+
+  if (loadToken !== profileState.citizenLoadToken) {
+    return citizen;
   }
 
   profileState.citizen = citizen;
   profileState.private = privateRecord || null;
-  applyCitizenProfile(citizen);
+
+  if (!privateRecord) {
+    player.balance = 'Unavailable';
+    renderPlayerDetails();
+  } else {
+    applyCitizenProfile(citizen);
+    renderPlayerDetails();
+  }
+
   return citizen;
 }
 
@@ -354,20 +438,8 @@ async function handleProfileEditSubmit(event) {
   }
 
   const form = event.currentTarget;
-  const publicName = form.public_name.value.trim();
   const politicalParty = form.political_party.value;
   const avatarUrl = form.avatar_url.value || getCitizenAvatarUrl(profileState.citizen);
-
-  if (!publicName) {
-    setAuthMessage('Public name is required.', 'error');
-    return;
-  }
-
-  const cleanedName = publicName.replace(/[^a-zA-Z' -]/g, '').trim();
-  if (!cleanedName || cleanedName.length > 64) {
-    setAuthMessage('Public name must be valid and under 64 characters.', 'error');
-    return;
-  }
 
   if (!builtInAvatarAssets.some((asset) => asset.url === avatarUrl)) {
     setAuthMessage('Please select a valid built-in avatar.', 'error');
@@ -377,7 +449,6 @@ async function handleProfileEditSubmit(event) {
   const { error } = await supabase
     .from('citizens')
     .update({
-      public_name: cleanedName,
       avatar_url: avatarUrl,
       political_party: politicalParty,
     })
@@ -418,11 +489,13 @@ function renderAppContent(appId, mode = 'normal') {
     const avatarUrl = getCitizenAvatarUrl(citizen);
     const displayName = citizen.public_name || player.name;
     const party = citizen.political_party || player.party;
-    const profession = privateRecord.profession || player.profession;
-    const socialClass = privateRecord.social_class || player.className;
-    const education = privateRecord.education || player.education;
-    const accountStatus = privateRecord.account_status || 'Active';
+    const profession = privateRecord.profession || 'Profile unavailable';
+    const socialClass = privateRecord.social_class || 'Profile unavailable';
+    const education = privateRecord.education || 'Profile unavailable';
+    const accountStatus = privateRecord.account_status || 'Unavailable';
+    const balanceValue = privateRecord.balance !== undefined && privateRecord.balance !== null ? formatCurrency(privateRecord.balance) : 'Unavailable';
     const createdAt = citizen.created_at ? new Date(citizen.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent';
+    const privateLoadError = profileState.privateLoadError ? `<div class="auth-message error" aria-live="polite">${profileState.privateLoadError}</div><button type="button" class="secondary-button" data-action="retry-profile-load">Retry</button>` : '';
 
     if (profileState.isEditing) {
       const options = builtInAvatarAssets
@@ -439,6 +512,7 @@ function renderAppContent(appId, mode = 'normal') {
 
       body.innerHTML = `
         <div class="mylife-card">
+          ${privateLoadError}
           <div class="mylife-header-row">
             <div>
               <div class="section-kicker">Edit profile</div>
@@ -448,10 +522,10 @@ function renderAppContent(appId, mode = 'normal') {
           </div>
 
           <form id="profileEditForm" class="profile-edit-form">
-            <label class="field-group">
+            <div class="field-group">
               <span>Public display name</span>
-              <input name="public_name" type="text" value="${displayName}" maxlength="64" />
-            </label>
+              <div class="read-only-field">${displayName}</div>
+            </div>
 
             <label class="field-group">
               <span>Political affiliation</span>
@@ -496,6 +570,7 @@ function renderAppContent(appId, mode = 'normal') {
 
     body.innerHTML = `
       <div class="mylife-card">
+        ${privateLoadError}
         <div class="mylife-profile-header">
           <div class="profile-avatar-large" style="background-image: url('${avatarUrl}')"></div>
           <div class="profile-copy">
@@ -507,9 +582,8 @@ function renderAppContent(appId, mode = 'normal') {
         </div>
 
         <div class="mylife-grid mylife-overview-grid">
-          <div class="info-row"><span>Citizen ID</span><span>${citizen.citizen_id || '—'}</span></div>
-          <div class="info-row"><span>Political affiliation</span><span>${party}</span></div>
-          <div class="info-row"><span>Profession</span><span>${profession}</span></div>
+          <div class="info-row"><span>Citizen ID</span><span>${citizen.citizen_id || 'Unavailable — missing ID'}</span></div>
+          <div class="info-row"><span>Account balance</span><span>${balanceValue}</span></div>
           <div class="info-row"><span>Social class</span><span>${socialClass}</span></div>
           <div class="info-row"><span>Education</span><span>${education}</span></div>
           <div class="info-row"><span>Account status</span><span>${accountStatus}</span></div>
@@ -554,6 +628,15 @@ function renderAppContent(appId, mode = 'normal') {
     if (editButton) {
       editButton.addEventListener('click', () => {
         profileState.isEditing = true;
+        renderAppContent('mylife');
+      });
+    }
+
+    const retryButton = body.querySelector('[data-action="retry-profile-load"]');
+    if (retryButton) {
+      retryButton.addEventListener('click', async () => {
+        profileState.privateLoadError = null;
+        await loadCitizenProfile();
         renderAppContent('mylife');
       });
     }
@@ -683,7 +766,7 @@ function returnHome() {
   activeAppId = null;
   homeScreen.classList.remove('hidden');
   lockScreen.classList.add('hidden');
-  floatingHome.style.display = 'grid';
+  floatingHome.style.display = 'none';
 }
 
 function toggleNotifications() {
@@ -795,7 +878,7 @@ async function checkCitizenRecord(session) {
   try {
     const { data, error } = await supabase
       .from('citizens')
-      .select('id, public_name, avatar_url, political_party')
+      .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, political_party, registration_date, created_at')
       .eq('auth_user_id', session.user.id)
       .maybeSingle();
 
@@ -813,8 +896,20 @@ async function checkCitizenRecord(session) {
 
     authState.hasCitizen = Boolean(data);
     if (data) {
-      profileState.citizen = data;
-      applyCitizenProfile(data);
+      const hasCompleteCitizenState = Boolean(
+        profileState.citizen && (
+          profileState.citizen.id ||
+          profileState.citizen.citizen_id ||
+          profileState.citizen.registration_date ||
+          profileState.citizen.created_at ||
+          profileState.citizen.avatar_type
+        )
+      );
+
+      if (!hasCompleteCitizenState) {
+        profileState.citizen = null;
+      }
+
       hideCitizenSetup();
       return true;
     }
@@ -917,6 +1012,8 @@ async function handleAuthSession() {
       showCitizenSetup();
       return;
     }
+
+    await loadCitizenProfile();
 
     hideCitizenSetup();
     authScreen.classList.add('hidden');
@@ -1024,6 +1121,8 @@ async function handleLogin(event) {
       showCitizenSetup();
       return;
     }
+
+    await loadCitizenProfile();
 
     setAuthMessage('', '');
     showAuthView('login');
@@ -1252,7 +1351,15 @@ async function handleLogout() {
 }
 
 function initializeAuthUi() {
-  document.getElementById('loginSubmitForm').addEventListener('submit', handleLogin);
+  const loginSubmitForm = document.getElementById('loginSubmitForm');
+  const loginSubmitButton = document.getElementById('loginSubmitButton');
+
+  loginSubmitForm.addEventListener('submit', handleLogin);
+  loginSubmitButton?.addEventListener('click', (event) => {
+    event.preventDefault();
+    loginSubmitForm.requestSubmit();
+  });
+
   document.getElementById('registerSubmitForm').addEventListener('submit', handleRegister);
   document.getElementById('recoverSubmitForm').addEventListener('submit', handleSendRecovery);
   document.getElementById('newPasswordSubmitForm').addEventListener('submit', handleUpdatePassword);
@@ -1317,11 +1424,56 @@ function initializePhone() {
   setClock();
   floatingHome.style.display = 'none';
 
-  document.getElementById('unlockButton').addEventListener('click', () => {
+  const unlockHome = async () => {
+    const supabase = getAuthClient();
+    if (!supabase) {
+      showAuthView('login');
+      return;
+    }
+
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session) {
+      showAuthView('login');
+      return;
+    }
+
+    if (!session.user?.email_confirmed_at) {
+      authState.pendingEmail = session.user?.email || '';
+      verifyEmailText.textContent = `A verification email was sent to ${session.user?.email || 'your email address'}.`;
+      showAuthView('verify');
+      return;
+    }
+
+    const citizenStatus = await checkCitizenRecord(session);
+    if (citizenStatus === null) {
+      return;
+    }
+
+    if (!citizenStatus) {
+      showCitizenSetup();
+      return;
+    }
+
+    await loadCitizenProfile();
+
     homeScreen.classList.remove('hidden');
     lockScreen.classList.add('hidden');
     authScreen.classList.add('hidden');
     lockVisible = false;
+  };
+
+  const lockScreenElement = document.getElementById('lock-screen');
+  const lockCard = document.getElementById('lockCard');
+  const unlockButton = document.getElementById('unlockButton');
+
+  lockScreenElement?.addEventListener('click', unlockHome);
+  lockCard?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    unlockHome();
+  });
+  unlockButton?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    unlockHome();
   });
 
   document.getElementById('profileWidget').addEventListener('click', () => {
@@ -1358,8 +1510,16 @@ function initializePhone() {
     notificationCenter.classList.add('hidden');
   });
 
-  document.getElementById('lockAvatar').textContent = player.avatarText;
-  document.getElementById('profileAvatar').textContent = player.avatarText;
+  const lockAvatar = document.getElementById('lockAvatar');
+  const profileAvatar = document.getElementById('profileAvatar');
+
+  if (lockAvatar) {
+    lockAvatar.textContent = player.avatarText;
+  }
+
+  if (profileAvatar) {
+    profileAvatar.textContent = player.avatarText;
+  }
 
   initializeAuthUi();
   setAuthMessage('', '');
