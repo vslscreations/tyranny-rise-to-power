@@ -28,52 +28,52 @@ const profileState = {
 const appCatalog = {
   social: {
     name: 'Social Media',
-    icon: '◉',
+    icon: './images/icons/socialmedia.PNG',
     color: '#8bc4ff',
     unread: 1,
   },
   moneytree: {
     name: 'MoneyTree',
-    icon: '◎',
+    icon: './images/icons/moneytree.PNG',
     color: '#8ae5a5',
     unread: 2,
   },
   mylife: {
     name: 'MyLife',
-    icon: '▣',
+    icon: './images/icons/mylife.PNG',
     color: '#d6b765',
     unread: 0,
   },
   store: {
     name: 'Store',
-    icon: '◌',
+    icon: './images/icons/store.PNG',
     color: '#ff9f7d',
     unread: 0,
   },
   localnews: {
     name: 'Local News',
-    icon: '◍',
+    icon: './images/icons/Localnews.PNG',
     color: '#c76dff',
     unread: 5,
   },
-  darkweb: {
-    name: 'Dark Web',
-    icon: '▤',
-    color: '#6bcab7',
-    unread: 1,
-    locked: true,
-  },
   voting: {
     name: 'Voting booth',
-    icon: '◔',
+    icon: './images/icons/voting booth.PNG',
     color: '#7db4ff',
     unread: 0,
   },
   history: {
     name: 'History book',
-    icon: '⚙',
+    icon: './images/icons/historybook.PNG',
     color: '#a7a4c7',
     unread: 0,
+  },
+  darkweb: {
+    name: 'Dark Web',
+    icon: './images/icons/dark web.PNG',
+    color: '#6bcab7',
+    unread: 1,
+    locked: true,
   },
 };
 
@@ -260,6 +260,10 @@ function renderAppGrid() {
       const app = appCatalog[appId];
       const badge = app.unread > 0 ? `<span class="badge">${app.unread}</span>` : '';
       const lockedClass = app.locked ? 'locked' : '';
+      const iconMarkup = app.icon.startsWith('.')
+        ? `<span class="icon-graphic app-icon-image" style="background-image: url('${app.icon}'); background-size: cover; background-position: center; background-repeat: no-repeat; border-color: rgba(255,255,255,0.08);"></span>`
+        : `<span class="icon-graphic" style="background: linear-gradient(135deg, rgba(255,255,255,0.18), ${app.color}55); color: ${app.color};">${app.icon}</span>`;
+
       return `
         <button
           type="button"
@@ -267,7 +271,7 @@ function renderAppGrid() {
           data-app-id="${appId}"
           aria-label="${app.name}"
         >
-          <span class="icon-graphic" style="background: linear-gradient(135deg, rgba(255,255,255,0.18), ${app.color}55); color: ${app.color};">${app.icon}</span>
+          ${iconMarkup}
           <span class="app-name">${app.name}</span>
           ${badge}
           ${app.locked ? '<span class="locked-state">Locked</span>' : ''}
@@ -345,10 +349,15 @@ function ensureAppWindow(appId) {
     appWindow.id = `app-${appId}`;
     appWindow.className = 'app-window';
     appWindow.setAttribute('aria-label', `${appCatalog[appId].name} app`);
+    const icon = appCatalog[appId].icon;
+    const miniMark = icon.startsWith('.')
+      ? `<span class="mini-mark-image" style="background-image: url('${icon}'); background-size: cover; background-position: center; background-repeat: no-repeat;"></span>`
+      : `<span class="mini-mark">${icon}</span>`;
+
     appWindow.innerHTML = `
       <header class="app-header">
         <h3>${appCatalog[appId].name}</h3>
-        <span class="mini-mark">${appCatalog[appId].icon}</span>
+        ${miniMark}
       </header>
       <div class="app-body"></div>
     `;
@@ -495,7 +504,7 @@ function renderAppContent(appId, mode = 'normal') {
     const accountStatus = privateRecord.account_status || 'Unavailable';
     const balanceValue = privateRecord.balance !== undefined && privateRecord.balance !== null ? formatCurrency(privateRecord.balance) : 'Unavailable';
     const createdAt = citizen.created_at ? new Date(citizen.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent';
-    const privateLoadError = profileState.privateLoadError ? `<div class="auth-message error" aria-live="polite">${profileState.privateLoadError}</div><button type="button" class="secondary-button" data-action="retry-profile-load">Retry</button>` : '';
+    const privateLoadError = profileState.privateLoadError ? `<div class="mylife-alert"><span>Profile unavailable</span><p>${profileState.privateLoadError}</p></div>` : '';
 
     if (profileState.isEditing) {
       const options = builtInAvatarAssets
@@ -511,12 +520,12 @@ function renderAppContent(appId, mode = 'normal') {
         .join('');
 
       body.innerHTML = `
-        <div class="mylife-card">
+        <div class="mylife-shell mylife-edit-shell">
           ${privateLoadError}
           <div class="mylife-header-row">
             <div>
               <div class="section-kicker">Edit profile</div>
-              <h4 class="mylife-title">Public identity</h4>
+              <h4 class="mylife-title">My identity</h4>
             </div>
             <button type="button" class="secondary-button" data-action="cancel-edit-profile">Cancel</button>
           </div>
@@ -568,59 +577,76 @@ function renderAppContent(appId, mode = 'normal') {
       return;
     }
 
+    const categoryCards = [
+      { key: 'career', title: 'Career', value: profession, icon: '◈', accent: '#5b7cff', description: 'Overview of current profession and work profile.' },
+      { key: 'education', title: 'Education', value: education, icon: '◍', accent: '#2bb673', description: 'Education status and records.' },
+      { key: 'skills', title: 'Skills', value: 'Skill tree', icon: '✦', accent: '#eb8a4f', description: 'Current capabilities and development.' },
+      { key: 'assets', title: 'Assets', value: 'Personal assets', icon: '▣', accent: '#9a6ef8', description: 'Personal holdings and resources.' },
+    ];
+
     body.innerHTML = `
-      <div class="mylife-card">
+      <div class="mylife-shell">
         ${privateLoadError}
-        <div class="mylife-profile-header">
-          <div class="profile-avatar-large" style="background-image: url('${avatarUrl}')"></div>
-          <div class="profile-copy">
-            <div class="section-kicker">Citizen profile</div>
-            <h4 class="mylife-title">${displayName}</h4>
-            <div class="mini-meta">${profession} · ${party}</div>
+
+        <section class="mylife-header-card">
+          <div class="mylife-header-top">
+            <div class="mylife-avatar-lg" style="background-image: url('${avatarUrl}')"></div>
+            <button type="button" class="mylife-edit-button" data-action="edit-profile">Edit</button>
           </div>
-          <button type="button" class="secondary-button" data-action="edit-profile">Edit</button>
-        </div>
 
-        <div class="mylife-grid mylife-overview-grid">
-          <div class="info-row"><span>Citizen ID</span><span>${citizen.citizen_id || 'Unavailable — missing ID'}</span></div>
-          <div class="info-row"><span>Account balance</span><span>${balanceValue}</span></div>
-          <div class="info-row"><span>Social class</span><span>${socialClass}</span></div>
-          <div class="info-row"><span>Education</span><span>${education}</span></div>
-          <div class="info-row"><span>Account status</span><span>${accountStatus}</span></div>
-          <div class="info-row"><span>Registered</span><span>${createdAt}</span></div>
-        </div>
-      </div>
+          <div class="mylife-header-copy">
+            <div class="section-kicker">My identity</div>
+            <h2>${displayName}</h2>
+            <div class="mylife-header-meta">
+              <span>${citizen.citizen_id || 'Citizen ID unavailable'}</span>
+              <span>${profession}</span>
+              <span>${party}</span>
+            </div>
+          </div>
+        </section>
 
-      <div class="mylife-section">
-        <div class="section-kicker">Career</div>
-        <div class="info-card">
-          <strong>${profession}</strong>
-          <p>Current profession and work profile are shown here. Career progression, applications, and salary systems remain deferred for beta.</p>
-        </div>
-      </div>
+        <section class="mylife-panel">
+          <div class="mylife-panel-header">
+            <div>
+              <div class="section-kicker">My overview</div>
+              <h3>Account summary</h3>
+            </div>
+          </div>
 
-      <div class="mylife-section">
-        <div class="section-kicker">Education</div>
-        <div class="info-card">
-          <strong>${education}</strong>
-          <p>Education status is viewable here. Future degree and enrollment systems are deferred for beta.</p>
-        </div>
-      </div>
+          <div class="mylife-overview-grid">
+            <div class="mylife-stat-row"><span>Account balance</span><strong>${balanceValue}</strong></div>
+            <div class="mylife-stat-row"><span>Social class</span><strong>${socialClass}</strong></div>
+            <div class="mylife-stat-row"><span>Education</span><strong>${education}</strong></div>
+            <div class="mylife-stat-row"><span>Account status</span><strong>${accountStatus}</strong></div>
+            <div class="mylife-stat-row"><span>Registered</span><strong>${createdAt}</strong></div>
+          </div>
+        </section>
 
-      <div class="mylife-section">
-        <div class="section-kicker">Skills</div>
-        <div class="info-card">
-          <strong>Skill tree</strong>
-          <p>Future skill progression is planned. This beta focuses on profile display and personal status management.</p>
-        </div>
-      </div>
+        <section class="mylife-panel">
+          <div class="mylife-panel-header">
+            <div>
+              <div class="section-kicker">My life</div>
+              <h3>Life categories</h3>
+            </div>
+          </div>
 
-      <div class="mylife-section">
-        <div class="section-kicker">Assets</div>
-        <div class="info-card empty-state">
-          <strong>Personal assets</strong>
-          <p>No personal asset system is active yet. This section will populate when the system is introduced.</p>
-        </div>
+          <div class="mylife-category-grid">
+            ${categoryCards
+              .map(
+                (category) => `
+                  <button type="button" class="mylife-category-card" data-category="${category.key}" style="--category-accent:${category.accent};">
+                    <span class="mylife-category-icon" style="background:${category.accent};">${category.icon}</span>
+                    <div class="mylife-category-copy">
+                      <span class="mylife-category-name">${category.title}</span>
+                      <small>${category.value}</small>
+                    </div>
+                    <span class="mylife-category-arrow">›</span>
+                  </button>
+                `,
+              )
+              .join('')}
+          </div>
+        </section>
       </div>
     `;
 
@@ -640,6 +666,83 @@ function renderAppContent(appId, mode = 'normal') {
         renderAppContent('mylife');
       });
     }
+
+    body.querySelectorAll('[data-category]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const category = button.dataset.category;
+        if (!category) {
+          return;
+        }
+
+        const categoryConfig = {
+          career: { title: 'Career', icon: '◈', accent: '#5b7cff', summary: 'Current profession and work profile', description: profession, empty: 'No career data is available yet.' },
+          education: { title: 'Education', icon: '◍', accent: '#2bb673', summary: 'Education status', description: education, empty: 'No education records are available yet.' },
+          skills: { title: 'Skills', icon: '✦', accent: '#eb8a4f', summary: 'Skill tree', description: 'Skill progression is not active in this beta.', empty: 'No skill records are available yet.' },
+          assets: { title: 'Assets', icon: '▣', accent: '#9a6ef8', summary: 'Personal assets', description: 'No personal asset system is active yet.', empty: 'No asset information is available yet.' },
+        };
+
+        const config = categoryConfig[category] || categoryConfig.career;
+        const detailRows = [
+          ['Citizen', displayName],
+          ['Profession', profession],
+          ['Political affiliation', party],
+          ['Account status', accountStatus],
+          ['Account balance', balanceValue],
+        ];
+
+        body.innerHTML = `
+          <div class="mylife-shell mylife-detail-shell">
+            <div class="mylife-detail-top">
+              <button type="button" class="mylife-back-button" data-action="mylife-back">‹ MyLife</button>
+              <div class="mylife-detail-title-wrap">
+                <span class="mylife-detail-icon" style="background:${config.accent};">${config.icon}</span>
+                <div>
+                  <div class="section-kicker">My life</div>
+                  <h3>${config.title}</h3>
+                </div>
+              </div>
+            </div>
+
+            <div class="mylife-detail-card">
+              <div class="mylife-detail-summary">
+                <span>${config.summary}</span>
+                <strong>${config.description}</strong>
+              </div>
+            </div>
+
+            <div class="mylife-panel mylife-detail-panel">
+              <div class="mylife-panel-header compact">
+                <div>
+                  <div class="section-kicker">Details</div>
+                  <h3>${config.title}</h3>
+                </div>
+              </div>
+              <div class="mylife-overview-grid">
+                ${detailRows
+                  .map(
+                    ([label, value]) => `
+                      <div class="mylife-stat-row">
+                        <span>${label}</span>
+                        <strong>${value}</strong>
+                      </div>
+                    `,
+                  )
+                  .join('')}
+              </div>
+            </div>
+
+            <div class="mylife-detail-empty">
+              <strong>${config.empty}</strong>
+              <p>Information for this category will appear here when the system is available.</p>
+            </div>
+          </div>
+        `;
+
+        body.querySelector('[data-action="mylife-back"]').addEventListener('click', () => {
+          renderAppContent('mylife');
+        });
+      });
+    });
   }
 
   if (appId === 'moneytree') {

@@ -8,6 +8,8 @@
       content="Tyranny: Rise to Power mobile interface prototype with a branded lock screen and home screen."
     />
     <title>Tyranny: Rise to Power</title>
+    <link rel="icon" type="image/png" href="./images/icons/favicon.PNG" />
+    <link rel="apple-touch-icon" href="./images/icons/favicon.PNG" />
     <link rel="stylesheet" href="./scipt.css" />
   </head>
   <body>
@@ -15,18 +17,15 @@
       <div class="phone-shell" aria-label="Tyranny phone interface">
         <div class="status-bar" aria-label="Status bar">
           <div class="status-left" id="clockLabel">9:41</div>
-          <div class="status-center" aria-label="Connectivity status">
+          <div class="status-right">
+            <span class="wallet-symbol" aria-hidden="true">◈</span>
+            <span class="wallet-balance" id="walletBalance">Loading...</span>
             <span class="signal-bars" aria-hidden="true">
               <span class="bar bar-1"></span>
               <span class="bar bar-2"></span>
               <span class="bar bar-3"></span>
               <span class="bar bar-4"></span>
             </span>
-            <span class="wifi-icon" aria-hidden="true"></span>
-          </div>
-          <div class="status-right">
-            <span class="wallet-symbol" aria-hidden="true">◈</span>
-            <span class="wallet-balance" id="walletBalance">Loading...</span>
             <span class="battery-wrap" aria-label="Battery charge">
               <span class="battery-level"></span>
             </span>

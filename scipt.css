@@ -58,27 +58,19 @@ button {
 
 .phone-shell {
   position: relative;
-  width: min(100vw, 430px);
-  height: min(100vh, 920px);
-  max-height: 100vh;
-  border-radius: 32px;
+  width: min(calc(100vw - 18px), 390px);
+  height: min(calc(100dvh - 18px), 844px);
+  max-height: 100dvh;
+  border-radius: 30px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(3, 8, 10, 0.86);
   overflow: hidden;
   box-shadow: 0 40px 80px rgba(0, 0, 0, 0.65);
+  aspect-ratio: 390 / 844;
 }
 
 .notch {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 180px;
-  height: 34px;
-  border-radius: 18px;
-  background: rgba(0, 0, 0, 0.9);
-  z-index: 25;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: none;
 }
 
 .status-bar {
@@ -87,10 +79,10 @@ button {
   left: 0;
   right: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  padding: calc(var(--safe-top) + 10px) var(--safe-right) 10px var(--safe-left);
+  padding: calc(var(--safe-top) + 4px) var(--safe-right) 6px var(--safe-left);
   z-index: 20;
   font-size: 0.72rem;
   font-weight: 700;
@@ -104,7 +96,12 @@ button {
 .status-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.status-right {
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .signal-bars {
@@ -112,6 +109,7 @@ button {
   align-items: end;
   gap: 2px;
   height: 12px;
+  margin-right: 2px;
 }
 
 .bar {
@@ -127,13 +125,7 @@ button {
 .bar-4 { height: 100%; }
 
 .wifi-icon {
-  position: relative;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.9) transparent transparent transparent;
-  border-radius: 50%;
-  transform: rotate(45deg);
+  display: none;
 }
 
 .wallet-symbol {
@@ -694,7 +686,7 @@ button {
 }
 
 .screen-home {
-  background: linear-gradient(180deg, rgba(6, 10, 12, 0.68), rgba(6, 10, 12, 0.9));
+  background: transparent;
   padding-top: calc(var(--safe-top) + 8px);
 }
 
@@ -825,17 +817,18 @@ button {
   font-size: 0.68rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(245, 213, 138, 0.8);
+  color: rgba(95, 103, 127, 0.8);
 }
 
 .mylife-title {
   margin: 6px 0 0;
   font-size: 1.2rem;
+  color: #1c2430;
 }
 
 .mini-meta {
   font-size: 0.74rem;
-  color: rgba(240, 227, 199, 0.7);
+  color: rgba(30, 38, 50, 0.72);
 }
 
 .mylife-grid {
@@ -843,11 +836,293 @@ button {
 }
 
 .mylife-overview-grid {
+  display: grid;
+  gap: 12px;
   margin-top: 18px;
 }
 
 .mylife-section {
   margin-top: 18px;
+}
+
+.mylife-shell {
+  display: grid;
+  gap: 18px;
+  min-height: 100%;
+  padding: 16px 14px 18px;
+  background: #f3f5f8;
+  color: #1d2430;
+}
+
+.mylife-header-card,
+.mylife-panel,
+.mylife-detail-card,
+.mylife-detail-empty {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 24px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.mylife-header-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px 18px 20px;
+}
+
+.mylife-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mylife-avatar-lg {
+  width: 74px;
+  height: 74px;
+  border-radius: 22px;
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+.mylife-edit-button,
+.mylife-back-button {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #eef3ff;
+  color: #273448;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 700;
+}
+
+.mylife-header-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.mylife-header-copy h2 {
+  margin: 0;
+  font-size: 1.54rem;
+  line-height: 1.1;
+  color: #121a26;
+}
+
+.mylife-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 0.72rem;
+  color: rgba(29, 36, 48, 0.7);
+}
+
+.mylife-header-meta span {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(94, 121, 192, 0.08);
+}
+
+.mylife-panel {
+  padding: 18px 16px;
+}
+
+.mylife-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.mylife-panel-header h3 {
+  margin: 6px 0 0;
+  font-size: 1.08rem;
+  color: #1a2330;
+}
+
+.mylife-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.mylife-stat-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.mylife-stat-row span {
+  color: rgba(29, 36, 48, 0.7);
+  font-size: 0.8rem;
+}
+
+.mylife-stat-row strong {
+  color: #1b2330;
+  font-size: 0.83rem;
+  text-align: right;
+  word-break: break-word;
+}
+
+.mylife-category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mylife-category-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(245,248,252,0.95));
+  border-radius: 22px;
+  padding: 12px 12px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  text-align: left;
+  color: #1e2b3a;
+}
+
+.mylife-category-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-size: 1.05rem;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
+}
+
+.mylife-category-copy {
+  display: grid;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mylife-category-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.mylife-category-copy small {
+  font-size: 0.68rem;
+  color: rgba(29, 36, 48, 0.62);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mylife-category-arrow {
+  color: rgba(29, 36, 48, 0.6);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.mylife-alert {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(235, 120, 84, 0.08);
+  border: 1px solid rgba(235, 120, 84, 0.15);
+  color: #7a2d1c;
+}
+
+.mylife-alert span {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.mylife-alert p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.mylife-detail-shell {
+  gap: 14px;
+}
+
+.mylife-detail-top {
+  display: grid;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.mylife-detail-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mylife-detail-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: white;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
+}
+
+.mylife-detail-title-wrap h3 {
+  margin: 4px 0 0;
+  font-size: 1.2rem;
+  color: #1d2430;
+}
+
+.mylife-detail-card {
+  padding: 16px;
+}
+
+.mylife-detail-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.mylife-detail-summary span {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(29, 36, 48, 0.62);
+}
+
+.mylife-detail-summary strong {
+  font-size: 1rem;
+  color: #1d2430;
+}
+
+.mylife-detail-panel {
+  padding: 12px 14px 2px;
+}
+
+.mylife-detail-empty {
+  display: grid;
+  gap: 8px;
+  padding: 18px 16px;
+}
+
+.mylife-detail-empty strong {
+  font-size: 0.92rem;
+  color: #1d2430;
+}
+
+.mylife-detail-empty p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: rgba(28, 36, 48, 0.7);
 }
 
 .info-card {
@@ -883,17 +1158,17 @@ button {
 
 .field-group span {
   display: block;
-  color: rgba(240, 227, 199, 0.8);
+  color: rgba(21, 32, 42, 0.8);
   font-size: 0.74rem;
 }
 
 .profile-edit-form input,
 .profile-edit-form select {
   width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 12px;
-  background: rgba(15, 20, 25, 0.82);
-  color: var(--text);
+  background: rgba(242, 244, 247, 0.95);
+  color: #1d2430;
   padding: 11px 12px;
 }
 
@@ -921,8 +1196,8 @@ button {
 }
 
 .secondary-button {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
+  background: rgba(17, 24, 39, 0.06);
+  color: #1d2430;
 }
 
 .app-grid {
@@ -951,6 +1226,11 @@ button {
 }
 
 .app-icon.locked {
+  opacity: 1;
+}
+
+.app-icon.locked .icon-graphic {
+  filter: grayscale(0.8) brightness(0.72);
   opacity: 0.9;
 }
 
@@ -965,6 +1245,13 @@ button {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 10px 22px rgba(0, 0, 0, 0.18);
   font-size: 1.5rem;
   line-height: 1;
+  overflow: hidden;
+}
+
+.app-icon .app-icon-image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .app-icon .app-name {
@@ -995,15 +1282,21 @@ button {
 
 .locked-state {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  top: 46px;
+  transform: translateX(-50%);
   display: grid;
   place-items: center;
-  background: rgba(12, 10, 12, 0.5);
-  border-radius: 20px;
-  color: rgba(255, 236, 190, 0.8);
-  font-size: 0.58rem;
-  letter-spacing: 0.12em;
+  min-width: 54px;
+  padding: 4px 8px;
+  background: rgba(12, 10, 12, 0.68);
+  border-radius: 999px;
+  color: rgba(255, 236, 190, 0.9);
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .app-layer {
@@ -1018,8 +1311,8 @@ button {
   inset: 48px 12px 18px 12px;
   display: none;
   flex-direction: column;
-  background: rgba(7, 12, 16, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #f5f7fb, #edf1f6 100%);
+  border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 26px;
   overflow: hidden;
   box-shadow: 0 24px 38px rgba(0, 0, 0, 0.28);
@@ -1045,14 +1338,20 @@ button {
   letter-spacing: 0.04em;
 }
 
-.app-header .mini-mark {
+.app-header .mini-mark,
+.app-header .mini-mark-image {
   width: 26px;
   height: 26px;
-  display: grid;
-  place-items: center;
+  display: block;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.08);
   color: var(--gold-bright);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.app-header .mini-mark-image {
+  background-color: rgba(255, 255, 255, 0.08);
 }
 
 .app-body {
@@ -1383,11 +1682,11 @@ button {
 
 @media (max-width: 420px) {
   .phone-shell {
-    width: 100vw;
-    height: 100vh;
-    border-radius: 0;
-    border: none;
-    max-height: 100vh;
+    width: calc(100vw - 10px);
+    height: calc(100dvh - 10px);
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    max-height: 100dvh;
   }
 
   .app-grid {
