@@ -108,6 +108,42 @@ const notifications = [
   },
 ];
 
+const socialState = {
+  activeTab: 'following',
+  followSet: new Set(),
+  posts: [],
+  loading: false,
+  error: null,
+  feedRequestToken: 0,
+  composerDraft: '',
+  composerBusy: false,
+  composerError: null,
+  composerSuccess: null,
+  pendingLikePostIds: new Set(),
+  selectedCommentPostId: null,
+  commentsPanelOpen: false,
+  commentsPanelLoading: false,
+  commentsPanelError: null,
+  commentsLoadingMore: false,
+  commentsPageByPost: {},
+  commentsHasMoreByPost: {},
+  commentsByPost: {},
+  commentsRequestToken: 0,
+  commentDraftByPost: {},
+  commentComposerBusyByPost: {},
+  commentComposerErrorByPost: {},
+  commentComposerSuccessByPost: {},
+  commentSubmitRequestToken: 0,
+  commentEditOpenByComment: {},
+  commentEditDraftByComment: {},
+  commentEditBusyByComment: {},
+  commentEditErrorByComment: {},
+  commentEditRequestTokenByComment: {},
+  commentDeleteBusyByComment: {},
+  commentDeleteRequestTokenByComment: {},
+  commentDeleteErrorByComment: {},
+};
+
 const appState = {};
 let activeAppId = null;
 let lockVisible = true;
@@ -185,6 +221,1297 @@ function formatCurrency(value) {
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(number);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[character]));
+}
+
+function getAvatarForCitizenName(name) {
+  const match = builtInAvatarAssets.find((option) => option.label.toLowerCase() === String(name || '').trim().toLowerCase());
+  if (match) {
+    return match.url;
+  }
+
+  return './assets/avatars/aurelia-voss.svg';
+}
+
+function formatSocialTimestamp(isoString) {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const minutes = Math.max(1, Math.round(diffMs / 60000));
+
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h`;
+  }
+
+  const days = Math.round(hours / 24);
+  return `${days}d`;
+}
+
+function normalizeSocialPostRecord(record) {
+  const author = record?.author || {};
+  const authorId = author?.id ?? record?.author_citizen_id ?? record?.authorCitizenId ?? null;
+  const authorName = author?.public_name ?? record?.author_name ?? record?.author ?? 'Citizen';
+  const authorAvatar = author?.avatar_url ?? record?.avatar_url ?? './assets/avatars/aurelia-voss.svg';
+  const resolvedAvatar = builtInAvatarAssets.some((option) => option.url === authorAvatar)
+    ? authorAvatar
+    : './assets/avatars/aurelia-voss.svg';
+
+  return {
+    id: String(record?.id ?? `social-${Date.now()}`),
+    authorCitizenId: authorId,
+    author: String(authorName || 'Citizen'),
+    handle: '@' + String(authorName || 'citizen').toLowerCase().replace(/[^a-z0-9]+/g, ''),
+    avatar: resolvedAvatar,
+    content: String(record?.content ?? ''),
+    createdAt: record?.created_at || new Date().toISOString(),
+    likes: Number(record?.like_count ?? 0),
+    comments: Number(record?.comment_count ?? 0),
+    reposts: Number(record?.repost_count ?? 0),
+    liked: Boolean(record?.liked_by_current_user),
+    reposted: Boolean(record?.reposted_by_current_user),
+    isCurrentUser: Boolean(record?.is_own_post),
+    currentUserFollowingAuthor: Boolean(record?.current_user_following_author),
+  };
+}
+
+function syncFollowSetFromPosts() {
+  socialState.followSet = new Set(
+    socialState.posts
+      .filter((post) => post.authorCitizenId && (post.currentUserFollowingAuthor || post.isCurrentUser))
+      .map((post) => post.authorCitizenId)
+  );
+}
+
+function updateSocialPostLikeState(postId, liked, likes) {
+  const normalizedPostId = String(postId);
+  const targetPost = socialState.posts.find((post) => String(post.id) === normalizedPostId);
+  if (!targetPost) {
+    return;
+  }
+
+  targetPost.liked = Boolean(liked);
+  targetPost.likes = Math.max(0, Number(likes) || 0);
+
+  document.querySelectorAll('.social-post').forEach((article) => {
+    if (String(article.dataset.postId) !== normalizedPostId) {
+      return;
+    }
+
+    const likeButton = article.querySelector('[data-social-action="like"]');
+    const likeMetric = article.querySelector('.social-post-metrics span');
+    if (likeButton) {
+      const isPending = socialState.pendingLikePostIds.has(normalizedPostId);
+      likeButton.classList.toggle('active', targetPost.liked);
+      likeButton.disabled = isPending;
+      likeButton.setAttribute('aria-disabled', String(isPending));
+      likeButton.setAttribute('aria-pressed', String(targetPost.liked));
+      likeButton.title = isPending ? 'Updating like...' : (targetPost.liked ? 'Unlike this post' : 'Like this post');
+      likeButton.textContent = `${targetPost.liked ? 'Liked' : 'Like'} · ${targetPost.likes}`;
+    }
+
+    if (likeMetric) {
+      likeMetric.textContent = `${targetPost.likes} likes`;
+    }
+  });
+}
+
+function getVisibleSocialPosts() {
+  return Array.isArray(socialState.posts) ? socialState.posts.slice() : [];
+}
+
+function getSafeAvatarUrl(url, fallback = './assets/avatars/aurelia-voss.svg') {
+  const candidate = String(url || '').trim();
+  if (!candidate) {
+    return fallback;
+  }
+
+  if (builtInAvatarAssets.some((option) => option.url === candidate)) {
+    return candidate;
+  }
+
+  return fallback;
+}
+
+async function loadCommentsForPost(postId, appendOnly = false) {
+  const supabase = getAuthClient();
+  const normalizedPostId = String(postId || '').trim();
+
+  if (!supabase || !normalizedPostId) {
+    socialState.commentsPanelError = 'Comments are unavailable because Supabase is not available.';
+    socialState.commentsPanelLoading = false;
+    socialState.commentsLoadingMore = false;
+    renderSocialApp();
+    return;
+  }
+
+  if (appendOnly) {
+    if (socialState.commentsLoadingMore || !socialState.commentsHasMoreByPost[normalizedPostId]) {
+      return;
+    }
+    socialState.commentsLoadingMore = true;
+    socialState.commentsPanelError = null;
+  } else {
+    socialState.commentsPanelLoading = true;
+    socialState.commentsLoadingMore = false;
+    socialState.commentsPanelError = null;
+    socialState.commentsHasMoreByPost[normalizedPostId] = false;
+  }
+
+  const requestId = ++socialState.commentsRequestToken;
+  const offset = appendOnly
+    ? Number(socialState.commentsPageByPost[normalizedPostId] || 0)
+    : 0;
+
+  renderSocialApp();
+
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    if (!sessionData?.session?.user) {
+      throw new Error('User is not authenticated.');
+    }
+
+    const { data, error } = await supabase.rpc('get_post_comments', {
+      p_post_id: normalizedPostId,
+      p_limit: 25,
+      p_offset: offset,
+    });
+
+    if (requestId !== socialState.commentsRequestToken) {
+      return;
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    const seenIds = new Set((socialState.commentsByPost[normalizedPostId] || []).map((comment) => String(comment.id)));
+
+    const mergedRows = appendOnly
+      ? rows.filter((comment) => !seenIds.has(String(comment.id)))
+      : rows;
+
+    const nextList = appendOnly
+      ? [...(socialState.commentsByPost[normalizedPostId] || []), ...mergedRows]
+      : mergedRows;
+
+    socialState.commentsByPost[normalizedPostId] = nextList;
+    socialState.commentsPageByPost[normalizedPostId] = offset + rows.length;
+    socialState.commentsHasMoreByPost[normalizedPostId] = rows.length === 25;
+    socialState.commentsPanelError = null;
+  } catch (error) {
+    if (requestId !== socialState.commentsRequestToken) {
+      return;
+    }
+
+    console.error('comment load failed', error);
+    socialState.commentsPanelError = error?.message || 'Unable to load comments right now.';
+    if (!appendOnly) {
+      socialState.commentsByPost[normalizedPostId] = [];
+    }
+  } finally {
+    if (requestId !== socialState.commentsRequestToken) {
+      return;
+    }
+
+    socialState.commentsPanelLoading = false;
+    socialState.commentsLoadingMore = false;
+    renderSocialApp();
+  }
+}
+
+async function loadSocialFeed(tabName = socialState.activeTab) {
+  const supabase = getAuthClient();
+  const rpcMap = {
+    latest: 'get_latest_feed',
+    following: 'get_following_feed',
+    trending: 'get_trending_feed',
+  };
+
+  const requestId = ++socialState.feedRequestToken;
+  const rpcName = rpcMap[tabName] || rpcMap.following;
+
+  if (!supabase) {
+    socialState.loading = false;
+    socialState.error = 'Social feed is unavailable because Supabase is not available.';
+    socialState.posts = [];
+    renderSocialApp();
+    return;
+  }
+
+  socialState.loading = true;
+  socialState.error = null;
+  renderSocialApp();
+
+  try {
+    const { data, error } = await supabase.rpc(rpcName, { p_limit: 50, p_offset: 0 });
+    if (requestId !== socialState.feedRequestToken) {
+      return;
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    const feedRows = Array.isArray(data) ? data : [];
+    socialState.posts = feedRows.map((record) => normalizeSocialPostRecord(record));
+    syncFollowSetFromPosts();
+    socialState.error = null;
+  } catch (error) {
+    if (requestId !== socialState.feedRequestToken) {
+      return;
+    }
+
+    console.error('social feed load failed', error);
+    socialState.posts = [];
+    socialState.error = 'Unable to load the social feed right now.';
+  } finally {
+    if (requestId === socialState.feedRequestToken) {
+      socialState.loading = false;
+      renderSocialApp();
+    }
+  }
+}
+
+function invalidateCommentEditRequests() {
+  Object.keys(socialState.commentEditRequestTokenByComment).forEach((commentId) => {
+    socialState.commentEditRequestTokenByComment[commentId] = Number(socialState.commentEditRequestTokenByComment[commentId] || 0) + 1;
+  });
+  socialState.commentEditBusyByComment = {};
+  socialState.commentEditOpenByComment = {};
+  socialState.commentEditDraftByComment = {};
+  socialState.commentEditErrorByComment = {};
+}
+
+function invalidateCommentDeleteRequests() {
+  Object.keys(socialState.commentDeleteRequestTokenByComment).forEach((commentId) => {
+    socialState.commentDeleteRequestTokenByComment[commentId] = Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0) + 1;
+  });
+  socialState.commentDeleteBusyByComment = {};
+  socialState.commentDeleteErrorByComment = {};
+}
+
+function renderSocialApp() {
+  const appWindow = ensureAppWindow('social');
+  const body = appWindow.querySelector('.app-body');
+  const currentUserName = profileState.citizen?.public_name || player.name || 'Aurelia Voss';
+  const currentUserHandle = '@' + String(currentUserName).toLowerCase().replace(/\s+/g, '');
+  const rawCurrentUserAvatar = getCitizenAvatarUrl(profileState.citizen || null);
+  const currentUserAvatar = rawCurrentUserAvatar && builtInAvatarAssets.some((option) => option.url === rawCurrentUserAvatar)
+    ? rawCurrentUserAvatar
+    : './assets/avatars/aurelia-voss.svg';
+  const visiblePosts = getVisibleSocialPosts();
+  const commentsPanelOpen = Boolean(socialState.commentsPanelOpen && socialState.selectedCommentPostId);
+  const selectedCommentPost = commentsPanelOpen
+    ? visiblePosts.find((post) => String(post.id) === String(socialState.selectedCommentPostId)) || null
+    : null;
+  const selectedCommentId = commentsPanelOpen && socialState.selectedCommentPostId
+    ? String(socialState.selectedCommentPostId)
+    : null;
+  const selectedCommentList = selectedCommentId
+    ? socialState.commentsByPost[selectedCommentId] || []
+    : [];
+  const selectedCommentDraft = selectedCommentId ? (socialState.commentDraftByPost[selectedCommentId] ?? '') : '';
+  const selectedCommentComposerBusy = selectedCommentId ? Boolean(socialState.commentComposerBusyByPost[selectedCommentId]) : false;
+  const selectedCommentComposerError = selectedCommentId ? socialState.commentComposerErrorByPost[selectedCommentId] || null : null;
+  const selectedCommentComposerSuccess = selectedCommentId ? socialState.commentComposerSuccessByPost[selectedCommentId] || null : null;
+  const selectedCommentDraftLength = Array.from(String(selectedCommentDraft || '')).length;
+  const selectedCommentTrimmedLength = Array.from(String(selectedCommentDraft || '').replace(/^\s+|\s+$/g, '')).length;
+
+  let feedMarkup = '';
+
+  if (socialState.loading) {
+    feedMarkup = `
+      <div class="mylife-alert">
+        <span>Loading feed</span>
+        <p>Retrieving ${escapeHtml(socialState.activeTab)} posts…</p>
+      </div>
+    `;
+  } else if (socialState.error) {
+    feedMarkup = `
+      <div class="mylife-alert">
+        <span>Feed unavailable</span>
+        <p>${escapeHtml(socialState.error)}</p>
+      </div>
+    `;
+  } else if (!visiblePosts.length) {
+    feedMarkup = `
+      <div class="mylife-alert">
+        <span>No updates</span>
+        <p>There are no posts in this feed right now.</p>
+      </div>
+    `;
+  } else {
+    feedMarkup = visiblePosts
+      .map((post) => {
+        const isFollowing = post.isCurrentUser || post.currentUserFollowingAuthor || socialState.followSet.has(post.authorCitizenId);
+        const likeLabel = post.liked ? 'Liked' : 'Like';
+        const repostLabel = post.reposted ? 'Reposted' : 'Repost';
+        const postId = escapeHtml(String(post.id));
+        const postAuthor = escapeHtml(post.author);
+        const postHandle = escapeHtml(post.handle);
+        const postContent = escapeHtml(post.content);
+        const postAvatar = escapeHtml(post.avatar);
+        const authorCitizenId = escapeHtml(String(post.authorCitizenId || ''));
+        const likePending = socialState.pendingLikePostIds.has(String(post.id));
+
+        return `
+          <article class="social-post" data-post-id="${postId}">
+            <div class="social-post-header">
+              <div class="social-post-author">
+                <div class="social-post-avatar" style="background-image: url('${postAvatar}')"></div>
+                <div>
+                  <strong>${postAuthor}</strong>
+                  <span>${postHandle} · ${escapeHtml(formatSocialTimestamp(post.createdAt))}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="social-follow-toggle ${isFollowing ? 'following' : ''}"
+                data-follow-author-id="${authorCitizenId}"
+                data-social-prototype="true"
+                title="Unavailable: database write functions are not available yet."
+                disabled
+                aria-disabled="true"
+              >
+                ${isFollowing ? 'Following' : 'Follow'}
+              </button>
+            </div>
+
+            <p class="social-post-copy">${postContent}</p>
+
+            <div class="social-post-metrics">
+              <span>${post.likes} likes</span>
+              <span>${post.comments} comments</span>
+              <span>${post.reposts} reposts</span>
+            </div>
+
+            <div class="social-post-actions">
+              <button
+                type="button"
+                class="social-action ${post.liked ? 'active' : ''}"
+                data-social-action="like"
+                data-post-id="${postId}"
+                data-social-prototype="true"
+                title="${likePending ? 'Updating like...' : (post.liked ? 'Unlike this post' : 'Like this post')}"
+                ${likePending ? 'disabled aria-disabled="true"' : ''}
+                aria-pressed="${String(Boolean(post.liked))}"
+              >${likeLabel} · ${post.likes}</button>
+              <button
+                type="button"
+                class="social-action"
+                data-social-action="comment"
+                data-post-id="${postId}"
+                data-social-prototype="true"
+                title="Open comments for this post"
+              >Comment · ${post.comments}</button>
+              <button
+                type="button"
+                class="social-action ${post.reposted ? 'active' : ''}"
+                data-social-action="repost"
+                data-post-id="${postId}"
+                data-social-prototype="true"
+                title="Unavailable: database write functions are not available yet."
+                disabled
+                aria-disabled="true"
+              >${repostLabel} · ${post.reposts}</button>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+  }
+
+  const composerDraftValue = escapeHtml(socialState.composerDraft ?? '');
+  const composerLength = Array.from(socialState.composerDraft ?? '').length;
+  const composerDisabled = socialState.composerBusy;
+
+  body.innerHTML = `
+    <div class="social-shell">
+      <div class="social-profile-card">
+        <div class="social-avatar" style="background-image: url('${escapeHtml(currentUserAvatar)}')"></div>
+        <div class="social-profile-copy">
+          <strong>${escapeHtml(currentUserName)}</strong>
+          <span>${escapeHtml(currentUserHandle)}</span>
+        </div>
+      </div>
+
+      <div class="social-search-box">
+        <span>⌕</span>
+        <input type="text" aria-label="Search citizens or discussions" value="Search citizens or discussions" readonly />
+      </div>
+
+      <div class="social-tabs" aria-label="Social media feed tabs">
+        <button type="button" class="social-tab ${socialState.activeTab === 'following' ? 'active' : ''}" data-social-tab="following">Following</button>
+        <button type="button" class="social-tab ${socialState.activeTab === 'trending' ? 'active' : ''}" data-social-tab="trending">Trending</button>
+        <button type="button" class="social-tab ${socialState.activeTab === 'latest' ? 'active' : ''}" data-social-tab="latest">Latest</button>
+      </div>
+
+      <form id="socialComposerForm" class="social-composer">
+        <textarea
+          rows="3"
+          placeholder="What's on your mind?"
+          ${composerDisabled ? 'disabled aria-disabled="true"' : ''}
+          aria-label="Write a public post"
+        >${composerDraftValue}</textarea>
+        <div class="social-composer-actions">
+          <span data-composer-counter>${composerLength} / 280</span>
+          <button type="submit" ${composerDisabled ? 'disabled aria-disabled="true"' : ''}>${composerDisabled ? 'Publishing...' : 'Publish'}</button>
+        </div>
+        ${socialState.composerError ? `<div class="social-composer-message social-composer-error">${escapeHtml(socialState.composerError)}</div>` : ''}
+        ${socialState.composerSuccess ? `<div class="social-composer-message social-composer-success">${escapeHtml(socialState.composerSuccess)}</div>` : ''}
+      </form>
+
+      <div class="social-feed">
+        ${feedMarkup}
+      </div>
+
+      ${commentsPanelOpen ? `
+        <aside class="social-comments-panel open" aria-live="polite">
+          <div class="social-comments-header">
+            <div class="social-comments-title-wrap">
+              <h4>Comments</h4>
+            </div>
+            <button
+              type="button"
+              class="social-comments-close"
+              data-comments-close="true"
+              aria-label="Close comments panel"
+              title="Close comments panel"
+            >×</button>
+          </div>
+
+          <div class="social-comments-body">
+            ${socialState.commentsPanelLoading
+              ? `<div class="mylife-alert"><span>Loading</span><p>Loading the selected post comments…</p></div>`
+              : socialState.commentsPanelError
+                ? `<div class="mylife-alert"><span>Comments unavailable</span><p>${escapeHtml(socialState.commentsPanelError)}</p><button type="button" class="social-action" data-comments-retry="true">Retry</button></div>`
+                : selectedCommentList.length === 0
+                  ? `<div class="social-comments-empty"><p>No comments yet for this post.</p></div>`
+                  : `
+                    <div class="social-comments-list">
+                      ${selectedCommentList
+                        .map((comment) => {
+                          const commentId = String(comment.id ?? '');
+                          const commentIdEscaped = escapeHtml(commentId);
+                          const commentAuthorName = escapeHtml(String(comment.author_public_name || 'Citizen'));
+                          const commentContent = String(comment.content || '');
+                          const commentAvatarUrl = getSafeAvatarUrl(comment.author_avatar_url || comment.avatar_url);
+                          const createdAt = comment.created_at ? formatSocialTimestamp(comment.created_at) : 'now';
+                          const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+                          const commentOwnerCitizenId = comment.author_citizen_id ? String(comment.author_citizen_id) : null;
+                          const isOwnComment = Boolean(currentCitizenId && commentOwnerCitizenId && commentOwnerCitizenId === currentCitizenId);
+                          const isEditing = Boolean(socialState.commentEditOpenByComment[commentId]);
+                          const isBusy = Boolean(socialState.commentEditBusyByComment[commentId]);
+                          const editDraft = socialState.commentEditDraftByComment[commentId] ?? commentContent;
+                          const editDraftLength = Array.from(String(editDraft || '')).length;
+                          const editTrimmedLength = Array.from(String((editDraft || '').replace(/^\s+|\s+$/g, ''))).length;
+                          const editError = socialState.commentEditErrorByComment[commentId] || null;
+
+                          if (isEditing) {
+                            return `
+                              <article class="social-comment-item" data-comment-id="${commentIdEscaped}">
+                                <div class="social-comment-header">
+                                  <div class="social-comment-author">
+                                    <div class="social-comment-avatar" style="background-image: url('${escapeHtml(commentAvatarUrl)}')"></div>
+                                    <div>
+                                      <strong>${commentAuthorName}</strong>
+                                      <span>${escapeHtml(createdAt)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="social-comment-editor">
+                                  <textarea
+                                    data-comment-edit-input="${commentIdEscaped}"
+                                    rows="3"
+                                    aria-label="Edit comment"
+                                    ${isBusy ? 'disabled aria-disabled="true"' : ''}
+                                  >${escapeHtml(editDraft)}</textarea>
+                                  <div class="social-comment-editor-actions">
+                                    <span data-comment-edit-counter="${commentIdEscaped}">${editDraftLength} / 500</span>
+                                    <div class="social-comment-editor-buttons">
+                                      <button
+                                        type="button"
+                                        class="social-action"
+                                        data-comment-action="cancel-edit"
+                                        data-comment-id="${commentIdEscaped}"
+                                        ${isBusy ? 'disabled aria-disabled="true"' : ''}
+                                      >Cancel</button>
+                                      <button
+                                        type="button"
+                                        class="social-action"
+                                        data-comment-action="save-edit"
+                                        data-comment-id="${commentIdEscaped}"
+                                        ${isBusy || editTrimmedLength === 0 || editDraftLength > 500 ? 'disabled aria-disabled="true"' : ''}
+                                      >${isBusy ? 'Saving...' : 'Save'}</button>
+                                    </div>
+                                  </div>
+                                  ${editError ? `<div class="social-comment-editor-error">${escapeHtml(editError)}</div>` : ''}
+                                </div>
+                              </article>
+                            `;
+                          }
+
+                          const deleteError = socialState.commentDeleteErrorByComment[commentId] || null;
+                          return `
+                            <article class="social-comment-item" data-comment-id="${commentIdEscaped}">
+                              <div class="social-comment-header">
+                                <div class="social-comment-author">
+                                  <div class="social-comment-avatar" style="background-image: url('${escapeHtml(commentAvatarUrl)}')"></div>
+                                  <div>
+                                    <strong>${commentAuthorName}</strong>
+                                    <span>${escapeHtml(createdAt)}</span>
+                                  </div>
+                                </div>
+                                ${isOwnComment ? `
+                                  <div class="social-comment-actions">
+                                    <button
+                                      type="button"
+                                      class="social-action"
+                                      data-comment-action="edit"
+                                      data-comment-id="${commentIdEscaped}"
+                                      ${isBusy ? 'disabled aria-disabled="true"' : ''}
+                                    >Edit</button>
+                                    <button
+                                      type="button"
+                                      class="social-action"
+                                      data-comment-action="delete"
+                                      data-comment-id="${commentIdEscaped}"
+                                      ${Boolean(socialState.commentDeleteBusyByComment[commentId]) ? 'disabled aria-disabled="true"' : ''}
+                                    >${Boolean(socialState.commentDeleteBusyByComment[commentId]) ? 'Deleting...' : 'Delete'}</button>
+                                  </div>
+                                ` : ''}
+                              </div>
+                              <p class="social-comment-copy">${escapeHtml(commentContent)}</p>
+                              ${deleteError ? `<div class="social-comment-editor-error">${escapeHtml(deleteError)}</div>` : ''}
+                            </article>
+                          `;
+                        })
+                        .join('')}
+                    </div>
+                    ${socialState.commentsHasMoreByPost[String(socialState.selectedCommentPostId)]
+                      ? `<div class="social-comments-actions"><button type="button" class="social-action" data-comments-load-more="true" ${socialState.commentsLoadingMore ? 'disabled aria-disabled="true"' : ''}>${socialState.commentsLoadingMore ? 'Loading...' : 'Load More Comments'}</button></div>`
+                      : ''}
+                  `}
+
+            <form id="socialCommentComposerForm" class="social-comment-composer-form">
+              <textarea
+                rows="3"
+                placeholder="Write a comment..."
+                aria-label="Write a comment"
+                ${selectedCommentComposerBusy ? 'disabled aria-disabled="true"' : ''}
+              >${escapeHtml(selectedCommentDraft)}</textarea>
+              <div class="social-comment-composer-actions">
+                <span data-comment-counter>${selectedCommentDraftLength} / 500</span>
+                <button
+                  type="submit"
+                  class="social-action"
+                  ${selectedCommentComposerBusy || selectedCommentTrimmedLength === 0 || selectedCommentDraftLength > 500 ? 'disabled aria-disabled="true"' : ''}
+                >${selectedCommentComposerBusy ? 'Posting...' : 'Post Comment'}</button>
+              </div>
+              ${selectedCommentComposerError ? `<div class="social-composer-message social-composer-error">${escapeHtml(selectedCommentComposerError)}</div>` : ''}
+              ${selectedCommentComposerSuccess ? `<div class="social-composer-message social-composer-success">${escapeHtml(selectedCommentComposerSuccess)}</div>` : ''}
+            </form>
+          </div>
+        </aside>
+      ` : ''}
+    </div>
+  `;
+
+  body.querySelectorAll('[data-social-tab]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const nextTab = button.dataset.socialTab;
+      if (!nextTab || nextTab === socialState.activeTab) {
+        return;
+      }
+
+      socialState.activeTab = nextTab;
+      await loadSocialFeed(nextTab);
+    });
+  });
+
+  const composerForm = body.querySelector('#socialComposerForm');
+  const composerTextarea = composerForm ? composerForm.querySelector('textarea') : null;
+  const composerCounter = composerForm ? composerForm.querySelector('[data-composer-counter]') : null;
+
+  if (composerTextarea) {
+    composerTextarea.value = socialState.composerDraft ?? '';
+    composerTextarea.addEventListener('input', (event) => {
+      socialState.composerDraft = event.target.value;
+      if (socialState.composerError) {
+        socialState.composerError = null;
+      }
+      if (socialState.composerSuccess) {
+        socialState.composerSuccess = null;
+      }
+
+      const errorBanner = composerForm?.querySelector('.social-composer-error');
+      if (errorBanner) {
+        errorBanner.remove();
+      }
+      const successBanner = composerForm?.querySelector('.social-composer-success');
+      if (successBanner) {
+        successBanner.remove();
+      }
+
+      if (composerCounter) {
+        composerCounter.textContent = `${Array.from(socialState.composerDraft).length} / 280`;
+      }
+    });
+  }
+
+  if (composerForm) {
+    composerForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const supabase = getAuthClient();
+      if (!supabase) {
+        socialState.composerError = 'Supabase is unavailable.';
+        renderSocialApp();
+        return;
+      }
+
+      if (socialState.composerBusy) {
+        return;
+      }
+
+      const rawContent = socialState.composerDraft ?? '';
+      const content = rawContent.replace(/^\s+|\s+$/g, '');
+      const trimmedLength = Array.from(content).length;
+
+      if (!content) {
+        socialState.composerError = 'Post content is required.';
+        renderSocialApp();
+        return;
+      }
+
+      if (trimmedLength < 1 || trimmedLength > 280) {
+        socialState.composerError = 'Posts must be 1–280 characters.';
+        renderSocialApp();
+        return;
+      }
+
+      socialState.composerBusy = true;
+      socialState.composerError = null;
+      socialState.composerSuccess = null;
+      renderSocialApp();
+
+      try {
+        const { error } = await supabase.rpc('create_social_post', { p_content: content });
+
+        if (error) {
+          throw error;
+        }
+
+        socialState.composerDraft = '';
+        socialState.composerSuccess = 'Post published.';
+        await loadSocialFeed(socialState.activeTab);
+
+        socialState.composerBusy = false;
+        renderSocialApp();
+      } catch (error) {
+        console.error('create social post failed', error);
+        socialState.composerError = error?.message || 'Unable to publish the post right now.';
+        socialState.composerBusy = false;
+        renderSocialApp();
+      }
+    });
+  }
+
+  const socialFeed = body.querySelector('.social-feed');
+
+  if (socialFeed && !socialFeed.dataset.commentDelegationBound) {
+    socialFeed.dataset.commentDelegationBound = 'true';
+    socialFeed.addEventListener('click', (event) => {
+      const commentButton = event.target.closest('[data-social-action="comment"]');
+      if (!commentButton || commentButton.disabled) {
+        return;
+      }
+
+      const postId = String(commentButton.dataset.postId || '').trim();
+      if (!postId) {
+        return;
+      }
+
+      const alreadyOpen = socialState.commentsPanelOpen && String(socialState.selectedCommentPostId || '').trim() === postId;
+      if (alreadyOpen) {
+        socialState.commentsPanelOpen = false;
+        socialState.selectedCommentPostId = null;
+        socialState.commentsPanelLoading = false;
+        socialState.commentsPanelError = null;
+        socialState.commentsLoadingMore = false;
+        socialState.commentsRequestToken += 1;
+        socialState.commentSubmitRequestToken += 1;
+        invalidateCommentEditRequests();
+        invalidateCommentDeleteRequests();
+        renderSocialApp();
+        return;
+      }
+
+      socialState.selectedCommentPostId = postId;
+      socialState.commentsPanelOpen = true;
+      socialState.commentsPanelLoading = false;
+      socialState.commentsPanelError = null;
+      socialState.commentsPageByPost[postId] = 0;
+      socialState.commentsHasMoreByPost[postId] = false;
+      socialState.commentsRequestToken += 1;
+      socialState.commentSubmitRequestToken += 1;
+      invalidateCommentEditRequests();
+      invalidateCommentDeleteRequests();
+      socialState.commentComposerBusyByPost[postId] = false;
+      socialState.commentComposerErrorByPost[postId] = null;
+      socialState.commentComposerSuccessByPost[postId] = null;
+      renderSocialApp();
+      loadCommentsForPost(postId, false);
+    });
+  }
+
+  if (socialFeed && !socialFeed.dataset.likeDelegationBound) {
+    socialFeed.dataset.likeDelegationBound = 'true';
+    socialFeed.addEventListener('click', async (event) => {
+      const likeButton = event.target.closest('[data-social-action="like"]');
+      if (!likeButton || likeButton.disabled) {
+        return;
+      }
+
+      const postId = String(likeButton.dataset.postId || '').trim();
+      if (!postId) {
+        return;
+      }
+
+      if (socialState.pendingLikePostIds.has(postId)) {
+        return;
+      }
+
+      const post = socialState.posts.find((entry) => String(entry.id) === postId);
+      if (!post) {
+        return;
+      }
+
+      const supabase = getAuthClient();
+      if (!supabase) {
+        socialState.error = 'Social feed is unavailable because Supabase is not available.';
+        renderSocialApp();
+        return;
+      }
+
+      const originalLiked = Boolean(post.liked);
+      const originalLikeCount = Math.max(0, Number(post.likes) || 0);
+      const nextLikedState = !originalLiked;
+      const nextLikeCount = Math.max(0, originalLikeCount + (nextLikedState ? 1 : -1));
+
+      socialState.pendingLikePostIds.add(postId);
+      post.liked = nextLikedState;
+      post.likes = nextLikeCount;
+      updateSocialPostLikeState(postId, nextLikedState, nextLikeCount);
+
+      try {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        if (!sessionData?.session?.user) {
+          throw new Error('User is not authenticated.');
+        }
+
+        const { error } = await supabase.rpc('set_post_like', {
+          p_post_id: postId,
+          p_liked: nextLikedState,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        socialState.error = null;
+      } catch (error) {
+        console.error('social like action failed', error);
+        post.liked = originalLiked;
+        post.likes = originalLikeCount;
+        updateSocialPostLikeState(postId, originalLiked, originalLikeCount);
+        socialState.error = 'Unable to update like right now.';
+        renderSocialApp();
+      } finally {
+        socialState.pendingLikePostIds.delete(postId);
+        updateSocialPostLikeState(postId, post.liked, post.likes);
+      }
+    });
+  }
+
+  const commentsCloseButton = body.querySelector('[data-comments-close]');
+  if (commentsCloseButton) {
+    commentsCloseButton.addEventListener('click', () => {
+      socialState.commentsPanelOpen = false;
+      socialState.selectedCommentPostId = null;
+      socialState.commentsPanelLoading = false;
+      socialState.commentsPanelError = null;
+      socialState.commentsLoadingMore = false;
+      socialState.commentsRequestToken += 1;
+      socialState.commentSubmitRequestToken += 1;
+      invalidateCommentEditRequests();
+      invalidateCommentDeleteRequests();
+      renderSocialApp();
+    });
+  }
+
+  const commentComposerForm = body.querySelector('#socialCommentComposerForm');
+  const commentComposerTextarea = commentComposerForm ? commentComposerForm.querySelector('textarea') : null;
+  const commentComposerCounter = commentComposerForm ? commentComposerForm.querySelector('[data-comment-counter]') : null;
+
+  if (commentComposerTextarea) {
+    const selectedPostId = String(socialState.selectedCommentPostId || '').trim();
+    commentComposerTextarea.value = selectedPostId ? (socialState.commentDraftByPost[selectedPostId] ?? '') : '';
+    commentComposerTextarea.addEventListener('input', (event) => {
+      const currentPostId = String(socialState.selectedCommentPostId || '').trim();
+      if (!currentPostId) {
+        return;
+      }
+
+      const nextValue = String(event.target.value || '');
+      const limitedValue = Array.from(nextValue).slice(0, 500).join('');
+      const trimmedValue = limitedValue.replace(/^\s+|\s+$/g, '');
+      const displayLength = Array.from(limitedValue).length;
+      const trimmedLength = Array.from(trimmedValue).length;
+      const isBusy = Boolean(socialState.commentComposerBusyByPost[currentPostId]);
+      const isDisabled = isBusy || trimmedLength === 0 || displayLength > 500;
+
+      socialState.commentDraftByPost[currentPostId] = limitedValue;
+      socialState.commentComposerErrorByPost[currentPostId] = null;
+      socialState.commentComposerSuccessByPost[currentPostId] = null;
+
+      if (commentComposerCounter) {
+        commentComposerCounter.textContent = `${displayLength} / 500`;
+      }
+
+      const submitButton = commentComposerForm?.querySelector('button[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = isDisabled;
+        submitButton.setAttribute('aria-disabled', String(isDisabled));
+      }
+
+      if (event.target) {
+        event.target.value = limitedValue;
+      }
+    });
+  }
+
+  if (commentComposerForm) {
+    commentComposerForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const selectedPostId = String(socialState.selectedCommentPostId || '').trim();
+      if (!selectedPostId || !socialState.commentsPanelOpen) {
+        return;
+      }
+
+      const draftValue = socialState.commentDraftByPost[selectedPostId] ?? '';
+      const trimmedDraft = draftValue.replace(/^\s+|\s+$/g, '');
+      const trimmedLength = Array.from(trimmedDraft).length;
+      const displayLength = Array.from(String(draftValue || '')).length;
+      const supabase = getAuthClient();
+
+      if (socialState.commentComposerBusyByPost[selectedPostId]) {
+        return;
+      }
+
+      if (!supabase) {
+        socialState.commentComposerErrorByPost[selectedPostId] = 'Supabase is unavailable.';
+        renderSocialApp();
+        return;
+      }
+
+      if (!trimmedDraft || trimmedLength > 500 || displayLength > 500) {
+        socialState.commentComposerErrorByPost[selectedPostId] = trimmedDraft ? 'Comment exceeds 500 characters.' : 'Comment content is required.';
+        renderSocialApp();
+        return;
+      }
+
+      const requestId = ++socialState.commentSubmitRequestToken;
+      socialState.commentComposerBusyByPost[selectedPostId] = true;
+      socialState.commentComposerErrorByPost[selectedPostId] = null;
+      socialState.commentComposerSuccessByPost[selectedPostId] = null;
+      renderSocialApp();
+
+      let successHandled = false;
+
+      try {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        if (!sessionData?.session?.user) {
+          throw new Error('User is not authenticated.');
+        }
+
+        if (requestId !== socialState.commentSubmitRequestToken || !socialState.commentsPanelOpen || String(socialState.selectedCommentPostId || '').trim() !== selectedPostId) {
+          return;
+        }
+
+        const { error } = await supabase.rpc('create_social_comment', {
+          p_post_id: selectedPostId,
+          p_content: trimmedDraft,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        if (!successHandled) {
+          const targetPost = socialState.posts.find((entry) => String(entry.id) === selectedPostId);
+          if (targetPost) {
+            targetPost.comments = Math.max(0, Number(targetPost.comments || 0) + 1);
+          }
+          successHandled = true;
+        }
+
+        if (requestId !== socialState.commentSubmitRequestToken) {
+          return;
+        }
+
+        const panelIsStillCurrent = socialState.commentsPanelOpen
+          && String(socialState.selectedCommentPostId || '').trim() === selectedPostId;
+
+        if (panelIsStillCurrent) {
+          socialState.commentDraftByPost[selectedPostId] = '';
+          socialState.commentComposerSuccessByPost[selectedPostId] = 'Comment posted.';
+        }
+
+        if (requestId !== socialState.commentSubmitRequestToken || !panelIsStillCurrent) {
+          return;
+        }
+
+        await loadCommentsForPost(selectedPostId, false);
+
+        if (requestId !== socialState.commentSubmitRequestToken) {
+          return;
+        }
+      } catch (error) {
+        if (requestId !== socialState.commentSubmitRequestToken) {
+          return;
+        }
+
+        console.error('create social comment failed', error);
+        socialState.commentComposerErrorByPost[selectedPostId] = error?.message || 'Unable to post the comment right now.';
+      } finally {
+        socialState.commentComposerBusyByPost[selectedPostId] = false;
+
+        if (requestId === socialState.commentSubmitRequestToken
+          && socialState.commentsPanelOpen
+          && String(socialState.selectedCommentPostId || '').trim() === selectedPostId) {
+          renderSocialApp();
+        }
+      }
+    });
+  }
+
+  const commentsBody = body.querySelector('.social-comments-body');
+  if (commentsBody && !commentsBody.dataset.commentEditBound) {
+    commentsBody.dataset.commentEditBound = 'true';
+
+    commentsBody.addEventListener('click', async (event) => {
+      const editButton = event.target.closest('[data-comment-action="edit"]');
+      if (editButton) {
+        const commentId = String(editButton.dataset.commentId || '').trim();
+        if (!commentId) {
+          return;
+        }
+
+        const commentRecord = (socialState.commentsByPost[String(socialState.selectedCommentPostId || '')] || []).find((entry) => String(entry.id) === commentId);
+        if (!commentRecord) {
+          return;
+        }
+
+        socialState.commentEditOpenByComment[commentId] = true;
+        socialState.commentEditDraftByComment[commentId] = String(commentRecord.content || '');
+        socialState.commentEditErrorByComment[commentId] = null;
+        renderSocialApp();
+        return;
+      }
+
+      const cancelButton = event.target.closest('[data-comment-action="cancel-edit"]');
+      if (cancelButton) {
+        const commentId = String(cancelButton.dataset.commentId || '').trim();
+        if (!commentId) {
+          return;
+        }
+
+        socialState.commentEditOpenByComment[commentId] = false;
+        socialState.commentEditErrorByComment[commentId] = null;
+        delete socialState.commentEditDraftByComment[commentId];
+        renderSocialApp();
+        return;
+      }
+
+      const deleteButton = event.target.closest('[data-comment-action="delete"]');
+      if (deleteButton) {
+        const commentId = String(deleteButton.dataset.commentId || '').trim();
+        if (!commentId || socialState.commentDeleteBusyByComment[commentId] || socialState.commentEditBusyByComment[commentId] || socialState.commentEditOpenByComment[commentId]) {
+          return;
+        }
+
+        const selectedPostId = String(socialState.selectedCommentPostId || '').trim();
+        if (!selectedPostId || !socialState.commentsPanelOpen) {
+          return;
+        }
+
+        const commentRecord = (socialState.commentsByPost[selectedPostId] || []).find((entry) => String(entry.id) === commentId);
+        if (!commentRecord) {
+          return;
+        }
+
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const commentOwnerCitizenId = commentRecord.author_citizen_id ? String(commentRecord.author_citizen_id) : null;
+        if (!currentCitizenId || !commentOwnerCitizenId || commentOwnerCitizenId !== currentCitizenId) {
+          return;
+        }
+
+        const supabase = getAuthClient();
+        if (!supabase) {
+          socialState.commentDeleteErrorByComment[commentId] = 'Comments are unavailable because Supabase is not available.';
+          renderSocialApp();
+          return;
+        }
+
+        const requestId = Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0) + 1;
+        socialState.commentDeleteRequestTokenByComment[commentId] = requestId;
+        socialState.commentDeleteBusyByComment[commentId] = true;
+        socialState.commentDeleteErrorByComment[commentId] = null;
+        renderSocialApp();
+
+        try {
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError) {
+            throw sessionError;
+          }
+
+          if (!sessionData?.session?.user) {
+            throw new Error('User is not authenticated.');
+          }
+
+          if (requestId !== Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0)) {
+            return;
+          }
+
+          const { error } = await supabase.rpc('delete_social_comment', {
+            p_comment_id: commentId,
+          });
+
+          if (error) {
+            throw error;
+          }
+
+          if (requestId !== Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0)) {
+            return;
+          }
+
+          const activeSelectedPostId = String(socialState.selectedCommentPostId || '').trim();
+          if (!socialState.commentsPanelOpen || !activeSelectedPostId || activeSelectedPostId !== selectedPostId) {
+            return;
+          }
+
+          socialState.commentsByPost[selectedPostId] = (socialState.commentsByPost[selectedPostId] || []).filter((entry) => String(entry.id) !== commentId);
+          const targetPost = socialState.posts.find((entry) => String(entry.id) === selectedPostId);
+          if (targetPost) {
+            targetPost.comments = Math.max(0, Number(targetPost.comments || 0) - 1);
+          }
+          socialState.commentEditRequestTokenByComment[commentId] = Number(socialState.commentEditRequestTokenByComment[commentId] || 0) + 1;
+          delete socialState.commentDeleteErrorByComment[commentId];
+          delete socialState.commentEditBusyByComment[commentId];
+          delete socialState.commentEditOpenByComment[commentId];
+          delete socialState.commentEditDraftByComment[commentId];
+          delete socialState.commentEditErrorByComment[commentId];
+          renderSocialApp();
+        } catch (error) {
+          if (requestId !== Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0)) {
+            return;
+          }
+
+          console.error('delete social comment failed', error);
+          socialState.commentDeleteErrorByComment[commentId] = error?.message || 'Unable to delete the comment right now.';
+          renderSocialApp();
+        } finally {
+          if (requestId === Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0)) {
+            socialState.commentDeleteBusyByComment[commentId] = false;
+            renderSocialApp();
+          }
+        }
+        return;
+      }
+
+      const saveButton = event.target.closest('[data-comment-action="save-edit"]');
+      if (!saveButton) {
+        return;
+      }
+
+      const commentId = String(saveButton.dataset.commentId || '').trim();
+      if (!commentId || socialState.commentEditBusyByComment[commentId] || socialState.commentDeleteBusyByComment[commentId]) {
+        return;
+      }
+
+      const originalPanelPostId = String(socialState.selectedCommentPostId || '').trim();
+      const draft = String(socialState.commentEditDraftByComment[commentId] ?? '');
+      const trimmedContent = draft.replace(/^\s+|\s+$/g, '');
+      const draftLength = Array.from(draft).length;
+      const supabase = getAuthClient();
+
+      if (!supabase) {
+        socialState.commentEditErrorByComment[commentId] = 'Comments are unavailable because Supabase is not available.';
+        renderSocialApp();
+        return;
+      }
+
+      if (!trimmedContent || draftLength > 500) {
+        socialState.commentEditErrorByComment[commentId] = trimmedContent ? 'Comment exceeds 500 characters.' : 'Comment content is required.';
+        renderSocialApp();
+        return;
+      }
+
+      const requestId = Number(socialState.commentEditRequestTokenByComment[commentId] || 0) + 1;
+      socialState.commentEditRequestTokenByComment[commentId] = requestId;
+      socialState.commentEditBusyByComment[commentId] = true;
+      socialState.commentEditErrorByComment[commentId] = null;
+      renderSocialApp();
+
+      try {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        if (!sessionData?.session?.user) {
+          throw new Error('User is not authenticated.');
+        }
+
+        if (requestId !== Number(socialState.commentEditRequestTokenByComment[commentId] || 0)) {
+          return;
+        }
+
+        const { error } = await supabase.rpc('update_social_comment', {
+          p_comment_id: commentId,
+          p_content: trimmedContent,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        if (requestId !== Number(socialState.commentEditRequestTokenByComment[commentId] || 0)) {
+          return;
+        }
+
+        const selectedPostId = String(socialState.selectedCommentPostId || '').trim();
+        if (!socialState.commentsPanelOpen || !selectedPostId || selectedPostId !== originalPanelPostId) {
+          return;
+        }
+
+        socialState.commentEditOpenByComment[commentId] = false;
+        delete socialState.commentEditDraftByComment[commentId];
+        delete socialState.commentEditErrorByComment[commentId];
+        await loadCommentsForPost(selectedPostId, false);
+      } catch (error) {
+        if (requestId !== Number(socialState.commentEditRequestTokenByComment[commentId] || 0)) {
+          return;
+        }
+
+        console.error('update social comment failed', error);
+        socialState.commentEditErrorByComment[commentId] = error?.message || 'Unable to save the comment right now.';
+        renderSocialApp();
+      } finally {
+        if (requestId === Number(socialState.commentEditRequestTokenByComment[commentId] || 0)) {
+          socialState.commentEditBusyByComment[commentId] = false;
+          renderSocialApp();
+        }
+      }
+    });
+
+    commentsBody.addEventListener('input', (event) => {
+      const textarea = event.target.closest('[data-comment-edit-input]');
+      if (!textarea) {
+        return;
+      }
+
+      const commentId = String(textarea.dataset.commentEditInput || '').trim();
+      if (!commentId) {
+        return;
+      }
+
+      const nextValue = String(event.target.value || '');
+      const limitedValue = Array.from(nextValue).slice(0, 500).join('');
+      socialState.commentEditDraftByComment[commentId] = limitedValue;
+      socialState.commentEditErrorByComment[commentId] = null;
+
+      const editorContainer = textarea.closest('.social-comment-editor');
+      if (editorContainer) {
+        const counter = editorContainer.querySelector('[data-comment-edit-counter]');
+        if (counter) {
+          counter.textContent = `${Array.from(limitedValue).length} / 500`;
+        }
+
+        const saveButton = editorContainer.querySelector('[data-comment-action="save-edit"]');
+        if (saveButton) {
+          const trimmedValue = limitedValue.replace(/^\s+|\s+$/g, '');
+          const isDisabled = socialState.commentEditBusyByComment[commentId] || trimmedValue.length === 0 || Array.from(limitedValue).length > 500;
+          saveButton.disabled = isDisabled;
+          saveButton.setAttribute('aria-disabled', String(isDisabled));
+        }
+      }
+
+      event.target.value = limitedValue;
+    });
+  }
+
+  const retryButton = body.querySelector('[data-comments-retry="true"]');
+  if (retryButton) {
+    retryButton.addEventListener('click', () => {
+      const postId = String(socialState.selectedCommentPostId || '').trim();
+      if (!postId) {
+        return;
+      }
+
+      socialState.commentsPanelError = null;
+      socialState.commentsPanelLoading = true;
+      socialState.commentsLoadingMore = false;
+      renderSocialApp();
+      loadCommentsForPost(postId, false);
+    });
+  }
+
+  const loadMoreButton = body.querySelector('[data-comments-load-more="true"]');
+  if (loadMoreButton) {
+    loadMoreButton.addEventListener('click', () => {
+      const postId = String(socialState.selectedCommentPostId || '').trim();
+      if (!postId || socialState.commentsLoadingMore) {
+        return;
+      }
+
+      loadCommentsForPost(postId, true);
+    });
+  }
+
+  body.querySelectorAll('[data-follow-author-id]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      return;
+    });
+  });
 }
 
 function applyCitizenProfile(citizen) {
@@ -480,16 +1807,11 @@ function renderAppContent(appId, mode = 'normal') {
   const body = appWindow.querySelector('.app-body');
 
   if (appId === 'social') {
-    body.innerHTML = `
-      <div class="mylife-card">
-        <div class="chat-thread" aria-label="Social Media feed">
-          <div class="chat-bubble">The neighborhood council approved a new community charter.</div>
-          <div class="chat-bubble user">We’re moving faster than the opposition expected.</div>
-          <div class="chat-bubble">Supporters are sharing your campaign posters across district channels.</div>
-          <div class="chat-bubble user">Keep the momentum up and release the donor update tonight.</div>
-        </div>
-      </div>
-    `;
+    renderSocialApp();
+    if (!socialState.loading && socialState.activeTab) {
+      loadSocialFeed(socialState.activeTab);
+    }
+    return;
   }
 
   if (appId === 'mylife') {
