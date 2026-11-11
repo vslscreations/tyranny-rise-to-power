@@ -98,6 +98,9 @@ revoke all on function public.delete_social_post(uuid) from public;
 revoke all on function public.delete_social_post(uuid) from anon;
 grant execute on function public.delete_social_post(uuid) to authenticated;
 
+revoke update on table public.social_posts from authenticated;
+revoke update (content, deleted_at) on table public.social_posts from authenticated;
+
 alter function public.update_social_post(uuid, text) owner to postgres;
 alter function public.delete_social_post(uuid) owner to postgres;
 

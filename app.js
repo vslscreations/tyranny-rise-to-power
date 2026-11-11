@@ -32,6 +32,12 @@ const appCatalog = {
     color: '#8bc4ff',
     unread: 1,
   },
+  messages: {
+    name: 'Messages',
+    icon: '✉',
+    color: '#f0c36f',
+    unread: 0,
+  },
   moneytree: {
     name: 'MoneyTree',
     icon: './images/icons/moneytree.PNG',
@@ -120,6 +126,9 @@ const socialState = {
   composerError: null,
   composerSuccess: null,
   pendingLikePostIds: new Set(),
+  pendingFollowAuthorIds: new Set(),
+  followErrorByAuthor: {},
+  profileMessageBusyByCitizen: {},
   selectedCommentPostId: null,
   commentsPanelOpen: false,
   commentsPanelLoading: false,
@@ -142,6 +151,47 @@ const socialState = {
   commentDeleteBusyByComment: {},
   commentDeleteRequestTokenByComment: {},
   commentDeleteErrorByComment: {},
+  postEditOpenByPost: {},
+  postEditDraftByPost: {},
+  postEditBusyByPost: {},
+  postEditErrorByPost: {},
+  postEditRequestTokenByPost: {},
+  postDeleteBusyByPost: {},
+  postDeleteErrorByPost: {},
+  postDeleteRequestTokenByPost: {},
+  openPostMenuId: null,
+  deleteConfirmationPostId: null,
+  profileView: {
+    active: false,
+    targetCitizenId: null,
+    data: null,
+    loading: false,
+    error: null,
+    requestToken: 0,
+  },
+};
+
+const messagesState = {
+  items: [],
+  loading: false,
+  error: null,
+  requestToken: 0,
+  activeThreadId: null,
+  activePartnerCitizenId: null,
+  activePartnerName: 'Citizen',
+  activePartnerAvatar: './assets/avatars/aurelia-voss.svg',
+  history: [],
+  historyLoading: false,
+  historyError: null,
+  historyRequestToken: 0,
+  composerDraft: '',
+  sending: false,
+  sendError: null,
+  sendRequestToken: 0,
+  readMarkRequestToken: 0,
+  readMarkInFlight: false,
+  readMarkThreadId: null,
+  readMarkError: null,
 };
 
 const appState = {};
@@ -200,6 +250,19 @@ function deriveAvatarText(name) {
   const parts = String(name || 'Aurelia Voss').trim().split(/\s+/).filter(Boolean);
   const initials = parts.slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('');
   return initials || 'AV';
+}
+
+function getDisplayProfession(value, fallback = 'Profile unavailable') {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) {
+    return fallback;
+  }
+
+  if (text.toLowerCase() === 'civilian') {
+    return 'Unemployed';
+  }
+
+  return text;
 }
 
 function getCitizenAvatarUrl(citizen) {
@@ -286,6 +349,614 @@ function normalizeSocialPostRecord(record) {
   };
 }
 
+function normalizeInboxConversation(record) {
+  const partnerName = String(record?.other_public_name || 'Citizen').trim() || 'Citizen';
+  const preview = String(record?.latest_message_preview || '').trim() || 'No messages yet.';
+  const unreadCount = Number(record?.unread_count ?? 0);
+  const partnerAvatar = typeof record?.other_avatar_url === 'string' && record.other_avatar_url.trim()
+    ? record.other_avatar_url.trim()
+    : './assets/avatars/aurelia-voss.svg';
+  const resolvedAvatar = builtInAvatarAssets.some((option) => option.url === partnerAvatar)
+    ? partnerAvatar
+    : './assets/avatars/aurelia-voss.svg';
+
+  return {
+    threadId: record?.thread_id ?? null,
+    partnerCitizenId: record?.other_citizen_id ?? null,
+    partnerName,
+    avatar: resolvedAvatar,
+    preview,
+    time: record?.latest_message_time ? new Date(record.latest_message_time).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }) : 'No recent messages',
+    unreadCount: Number.isFinite(unreadCount) ? Math.max(0, unreadCount) : 0,
+  };
+}
+
+function openMessageThread(conversation) {
+  if (!conversation?.threadId) {
+    return;
+  }
+
+  messagesState.readMarkRequestToken += 1;
+  messagesState.readMarkInFlight = false;
+  messagesState.readMarkThreadId = null;
+  messagesState.readMarkError = null;
+
+  messagesState.activeThreadId = conversation.threadId;
+  messagesState.activePartnerCitizenId = conversation.partnerCitizenId ?? null;
+  messagesState.activePartnerName = conversation.partnerName || 'Citizen';
+  messagesState.activePartnerAvatar = conversation.avatar || './assets/avatars/aurelia-voss.svg';
+  messagesState.history = [];
+  messagesState.historyError = null;
+  messagesState.historyLoading = true;
+  renderMessagesApp();
+  loadMessageHistory(conversation.threadId);
+}
+
+async function markIncomingMessagesRead(threadId, partnerCitizenId) {
+  if (!threadId || !partnerCitizenId) {
+    return;
+  }
+
+  const currentCitizenId = String(profileState?.citizen?.id ?? '');
+  if (!currentCitizenId) {
+    return;
+  }
+
+  const unreadIncoming = (messagesState.history || []).filter((message) => {
+    const senderCitizenId = String(message.senderCitizenId ?? '');
+    const isIncomingFromPartner = senderCitizenId === String(partnerCitizenId);
+    const isCurrentCitizenMessage = senderCitizenId === currentCitizenId;
+    return isIncomingFromPartner && !isCurrentCitizenMessage && message.readAt == null;
+  });
+
+  if (!unreadIncoming.length) {
+    return;
+  }
+
+  if (messagesState.readMarkInFlight && messagesState.readMarkThreadId === threadId) {
+    return;
+  }
+
+  const requestToken = ++messagesState.readMarkRequestToken;
+  messagesState.readMarkInFlight = true;
+  messagesState.readMarkThreadId = threadId;
+  messagesState.readMarkError = null;
+
+  const supabase = getAuthClient();
+  if (!supabase) {
+    if (requestToken === messagesState.readMarkRequestToken) {
+      messagesState.readMarkInFlight = false;
+      messagesState.readMarkThreadId = null;
+    }
+    return;
+  }
+
+  try {
+    const { error } = await supabase
+      .from('messages')
+      .update({ read_at: new Date().toISOString() })
+      .eq('thread_id', threadId)
+      .eq('sender_citizen_id', partnerCitizenId)
+      .is('read_at', null);
+
+    if (requestToken !== messagesState.readMarkRequestToken) {
+      return;
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    await Promise.all([
+      loadMessageHistory(threadId),
+      loadMessagesInbox(),
+    ]);
+  } catch (error) {
+    console.error('message read receipt update failed', error);
+    if (requestToken !== messagesState.readMarkRequestToken) {
+      return;
+    }
+
+    messagesState.readMarkError = error?.message || 'Unable to mark incoming messages as read.';
+    renderMessagesApp();
+  } finally {
+    if (requestToken === messagesState.readMarkRequestToken) {
+      messagesState.readMarkInFlight = false;
+      messagesState.readMarkThreadId = null;
+    }
+  }
+}
+
+async function loadMessageHistory(threadId) {
+  const requestToken = ++messagesState.historyRequestToken;
+  const supabase = getAuthClient();
+
+  if (!threadId) {
+    messagesState.history = [];
+    messagesState.historyError = 'Conversation is unavailable.';
+    messagesState.historyLoading = false;
+    renderMessagesApp();
+    return [];
+  }
+
+  if (!supabase) {
+    if (requestToken !== messagesState.historyRequestToken) {
+      return [];
+    }
+
+    messagesState.history = [];
+    messagesState.historyError = 'Sign in to view your messages.';
+    messagesState.historyLoading = false;
+    renderMessagesApp();
+    return [];
+  }
+
+  let sessionData;
+  let sessionError;
+  try {
+    const sessionResult = await supabase.auth.getSession();
+    sessionData = sessionResult?.data;
+    sessionError = sessionResult?.error;
+  } catch (error) {
+    if (requestToken !== messagesState.historyRequestToken) {
+      return [];
+    }
+
+    messagesState.history = [];
+    messagesState.historyError = error?.message || 'Unable to load your conversation right now.';
+    messagesState.historyLoading = false;
+    renderMessagesApp();
+    return [];
+  }
+
+  if (requestToken !== messagesState.historyRequestToken) {
+    return [];
+  }
+
+  if (sessionError || !sessionData?.session?.user) {
+    messagesState.history = [];
+    messagesState.historyError = 'Sign in to view your messages.';
+    messagesState.historyLoading = false;
+    renderMessagesApp();
+    return [];
+  }
+
+  messagesState.historyLoading = true;
+  messagesState.historyError = null;
+  renderMessagesApp();
+
+  try {
+    const { data, error } = await supabase.rpc('get_message_history', {
+      p_thread_id: threadId,
+      p_limit: 50,
+      p_offset: 0,
+    });
+
+    if (requestToken !== messagesState.historyRequestToken) {
+      return [];
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    const normalizedHistory = Array.isArray(data)
+      ? data.map((message) => ({
+          id: message?.id ?? null,
+          senderCitizenId: message?.sender_citizen_id ?? null,
+          content: String(message?.content ?? '').trim(),
+          createdAt: message?.created_at ?? null,
+          readAt: message?.read_at ?? null,
+        }))
+      : [];
+
+    messagesState.history = normalizedHistory;
+    messagesState.historyError = null;
+    messagesState.historyLoading = false;
+
+    if (messagesState.activeThreadId === threadId && messagesState.activePartnerCitizenId) {
+      markIncomingMessagesRead(threadId, messagesState.activePartnerCitizenId);
+    }
+
+    renderMessagesApp();
+    return normalizedHistory;
+  } catch (error) {
+    console.error('message history load failed', error);
+    if (requestToken !== messagesState.historyRequestToken) {
+      return [];
+    }
+
+    messagesState.history = [];
+    messagesState.historyError = error?.message || 'Unable to load that conversation right now.';
+    messagesState.historyLoading = false;
+    renderMessagesApp();
+    return [];
+  }
+}
+
+async function loadMessagesInbox() {
+  const requestToken = ++messagesState.requestToken;
+
+  const supabase = getAuthClient();
+  if (!supabase) {
+    if (requestToken !== messagesState.requestToken) {
+      return [];
+    }
+
+    messagesState.error = 'Sign in to view your messages.';
+    messagesState.loading = false;
+    messagesState.items = [];
+    renderMessagesApp();
+    return [];
+  }
+
+  let sessionData;
+  let sessionError;
+  try {
+    const sessionResult = await supabase.auth.getSession();
+    sessionData = sessionResult?.data;
+    sessionError = sessionResult?.error;
+  } catch (error) {
+    if (requestToken !== messagesState.requestToken) {
+      return [];
+    }
+
+    messagesState.error = error?.message || 'Unable to load your inbox right now.';
+    messagesState.loading = false;
+    messagesState.items = [];
+    renderMessagesApp();
+    return [];
+  }
+
+  if (requestToken !== messagesState.requestToken) {
+    return [];
+  }
+
+  if (sessionError || !sessionData?.session?.user) {
+    messagesState.error = 'Sign in to view your messages.';
+    messagesState.loading = false;
+    messagesState.items = [];
+    renderMessagesApp();
+    return [];
+  }
+
+  messagesState.loading = true;
+  messagesState.error = null;
+  renderMessagesApp();
+
+  try {
+    const { data, error } = await supabase.rpc('get_message_inbox', {
+      p_limit: 50,
+      p_offset: 0,
+    });
+
+    if (requestToken !== messagesState.requestToken) {
+      return [];
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    messagesState.items = Array.isArray(data) ? data.map((record) => normalizeInboxConversation(record)) : [];
+    messagesState.error = null;
+    messagesState.loading = false;
+    renderMessagesApp();
+    return messagesState.items;
+  } catch (error) {
+    console.error('message inbox load failed', error);
+    if (requestToken !== messagesState.requestToken) {
+      return [];
+    }
+
+    messagesState.items = [];
+    messagesState.error = error?.message || 'Unable to load your inbox right now.';
+    messagesState.loading = false;
+    renderMessagesApp();
+    return [];
+  }
+}
+
+async function sendMessageInThread() {
+  const requestToken = ++messagesState.sendRequestToken;
+  const supabase = getAuthClient();
+
+  if (!messagesState.activeThreadId) {
+    messagesState.sendError = 'No conversation is selected.';
+    renderMessagesApp();
+    return;
+  }
+
+  if (!profileState?.citizen?.id) {
+    messagesState.sendError = 'Your citizen record is unavailable.';
+    renderMessagesApp();
+    return;
+  }
+
+  if (messagesState.sending) {
+    return;
+  }
+
+  const trimmedDraft = messagesState.composerDraft.replace(/\r\n/g, '\n').trim();
+  if (!trimmedDraft) {
+    messagesState.sendError = 'Message cannot be empty.';
+    renderMessagesApp();
+    return;
+  }
+
+  if (Array.from(messagesState.composerDraft).length > 2000) {
+    messagesState.sendError = 'Message cannot exceed 2,000 characters.';
+    renderMessagesApp();
+    return;
+  }
+
+  if (!supabase) {
+    messagesState.sendError = 'Supabase is unavailable.';
+    renderMessagesApp();
+    return;
+  }
+
+  let sessionData;
+  let sessionError;
+  try {
+    const sessionResult = await supabase.auth.getSession();
+    sessionData = sessionResult?.data;
+    sessionError = sessionResult?.error;
+  } catch (error) {
+    messagesState.sendError = error?.message || 'Unable to verify your session.';
+    renderMessagesApp();
+    return;
+  }
+
+  if (sessionError || !sessionData?.session?.user) {
+    messagesState.sendError = 'Please sign in again to continue.';
+    renderMessagesApp();
+    return;
+  }
+
+  const currentCitizenId = String(profileState.citizen.id);
+  const senderCitizenId = String(profileState.citizen.id);
+  if (!senderCitizenId || senderCitizenId !== currentCitizenId) {
+    messagesState.sendError = 'Your citizen account is unavailable for sending.';
+    renderMessagesApp();
+    return;
+  }
+
+  messagesState.sending = true;
+  messagesState.sendError = null;
+  renderMessagesApp();
+
+  try {
+    const { error } = await supabase
+      .from('messages')
+      .insert({
+        thread_id: messagesState.activeThreadId,
+        sender_citizen_id: senderCitizenId,
+        content: trimmedDraft,
+      });
+
+    if (requestToken !== messagesState.sendRequestToken) {
+      return;
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    messagesState.composerDraft = '';
+    messagesState.sendError = null;
+    messagesState.sending = false;
+
+    await loadMessageHistory(messagesState.activeThreadId);
+    await loadMessagesInbox();
+    renderMessagesApp();
+    return;
+  } catch (error) {
+    console.error('message send failed', error);
+    if (requestToken !== messagesState.sendRequestToken) {
+      return;
+    }
+
+    messagesState.sendError = error?.message || 'Unable to send your message right now.';
+    messagesState.sending = false;
+    renderMessagesApp();
+    return;
+  }
+}
+
+function renderMessagesApp() {
+  const body = document.querySelector('#app-messages .app-body');
+  if (!body) {
+    return;
+  }
+
+  const currentCitizenId = profileState?.citizen?.id ?? null;
+
+  if (messagesState.activeThreadId) {
+    const partnerAvatar = builtInAvatarAssets.some((option) => option.url === messagesState.activePartnerAvatar)
+      ? messagesState.activePartnerAvatar
+      : './assets/avatars/aurelia-voss.svg';
+
+    const historyMarkup = messagesState.historyLoading
+      ? '<div class="mylife-alert"><span>Loading</span><p>Loading conversation…</p></div>'
+      : messagesState.historyError
+        ? `<div class="mylife-alert"><span>Conversation unavailable</span><p>${escapeHtml(messagesState.historyError)}</p></div>`
+        : messagesState.history.length > 0
+          ? messagesState.history.map((message) => {
+              const isOutgoing = String(message.senderCitizenId ?? '') === String(currentCitizenId ?? '');
+              const timestamp = message.createdAt ? new Date(message.createdAt).toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              }) : 'Just now';
+              return `
+                <div class="message-row ${isOutgoing ? 'self' : 'other'}">
+                  <div class="message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">
+                    <div class="message-text">${escapeHtml(message.content || '')}</div>
+                    <div class="message-timestamp">${escapeHtml(timestamp)}</div>
+                  </div>
+                </div>
+              `;
+            }).join('')
+          : '<div class="messages-empty-state"><strong>No messages yet.</strong><p>This thread is empty.</p></div>';
+
+    const composerMarkup = `
+      <div class="messages-composer">
+        ${messagesState.sendError ? `<div class="mylife-alert"><span>Message failed</span><p>${escapeHtml(messagesState.sendError)}</p></div>` : ''}
+        ${messagesState.readMarkError ? `<div class="mylife-alert"><span>Read status update failed</span><p>${escapeHtml(messagesState.readMarkError)}</p></div>` : ''}
+        <textarea
+          class="message-composer-input"
+          rows="3"
+          maxlength="2000"
+          placeholder="Write a message…"
+          data-message-composer
+          aria-label="Write a message"
+        >${escapeHtml(messagesState.composerDraft)}</textarea>
+        <div class="messages-composer-row">
+          <span class="message-composer-count">${Array.from(messagesState.composerDraft).length}/2000</span>
+          <button type="button" class="primary-button" data-action="send-message" ${messagesState.sending ? 'disabled' : ''}>
+            ${messagesState.sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      </div>
+    `;
+
+    const conversationMarkup = `
+      <div class="messages-card">
+        <div class="messages-header-row">
+          <button type="button" class="secondary-button" data-action="back-to-inbox">Back to Inbox</button>
+          <div class="messages-conversation-header">
+            <div class="message-thread-avatar" style="background-image: url('${escapeHtml(partnerAvatar)}')"></div>
+            <div>
+              <div class="section-kicker">Conversation</div>
+              <h3>${escapeHtml(messagesState.activePartnerName)}</h3>
+            </div>
+          </div>
+          <button type="button" class="secondary-button" data-action="open-partner-profile" data-partner-citizen-id="${escapeHtml(String(messagesState.activePartnerCitizenId ?? ''))}">To profile</button>
+        </div>
+        <div class="messages-thread-list">
+          ${historyMarkup}
+        </div>
+        ${composerMarkup}
+      </div>
+    `;
+
+    body.innerHTML = conversationMarkup;
+
+    const backButton = body.querySelector('[data-action="back-to-inbox"]');
+    backButton?.addEventListener('click', () => {
+      messagesState.readMarkRequestToken += 1;
+      messagesState.readMarkInFlight = false;
+      messagesState.readMarkThreadId = null;
+      messagesState.readMarkError = null;
+
+      messagesState.activeThreadId = null;
+      messagesState.activePartnerCitizenId = null;
+      messagesState.activePartnerName = 'Citizen';
+      messagesState.activePartnerAvatar = './assets/avatars/aurelia-voss.svg';
+      messagesState.history = [];
+      messagesState.historyError = null;
+      messagesState.historyLoading = false;
+      messagesState.composerDraft = '';
+      messagesState.sendError = null;
+      messagesState.sending = false;
+      renderMessagesApp();
+      loadMessagesInbox();
+    });
+
+    const composer = body.querySelector('[data-message-composer]');
+    composer?.addEventListener('input', (event) => {
+      const nextValue = String(event.target.value || '');
+      messagesState.composerDraft = nextValue;
+      messagesState.sendError = null;
+
+      const composerContainer = event.target.closest('.messages-composer');
+      const counter = composerContainer?.querySelector('.message-composer-count');
+      if (counter) {
+        counter.textContent = `${Array.from(nextValue).length}/2000`;
+      }
+    });
+
+    const profileButton = body.querySelector('[data-action="open-partner-profile"]');
+    profileButton?.addEventListener('click', async () => {
+      const targetCitizenId = String(profileButton.dataset.partnerCitizenId || '').trim();
+      if (!targetCitizenId) {
+        return;
+      }
+
+      openApp('social');
+      await loadSocialProfileView(targetCitizenId);
+    });
+
+    const sendButton = body.querySelector('[data-action="send-message"]');
+    sendButton?.addEventListener('click', () => {
+      sendMessageInThread();
+    });
+    return;
+  }
+
+  const inboxMarkup = `
+    <div class="messages-card">
+      <div class="messages-header-row">
+        <div>
+          <div class="section-kicker">Private messages</div>
+          <h3>Inbox</h3>
+        </div>
+        <button type="button" class="secondary-button" data-action="refresh-messages">Refresh</button>
+      </div>
+      ${messagesState.loading ? '<div class="mylife-alert"><span>Loading</span><p>Checking your inbox…</p></div>' : ''}
+      ${messagesState.error ? `<div class="mylife-alert"><span>Messages unavailable</span><p>${escapeHtml(messagesState.error)}</p></div>` : ''}
+      <div class="messages-list">
+        ${messagesState.items.length > 0 ? messagesState.items.map((conversation) => `
+          <button type="button" class="message-thread-item message-thread-button" data-action="open-message-thread" data-thread-id="${escapeHtml(String(conversation.threadId ?? ''))}">
+            <div class="message-thread-avatar" style="background-image: url('${escapeHtml(conversation.avatar)}')"></div>
+            <div class="message-thread-copy">
+              <div class="message-thread-meta">
+                <strong>${escapeHtml(conversation.partnerName)}</strong>
+                <span>${escapeHtml(conversation.time)}</span>
+              </div>
+              <div class="message-thread-preview-row">
+                <p>${escapeHtml(conversation.preview.length > 96 ? `${conversation.preview.slice(0, 93)}…` : conversation.preview)}</p>
+                ${conversation.unreadCount > 0 ? `<span class="message-unread-badge">${escapeHtml(String(conversation.unreadCount))}</span>` : ''}
+              </div>
+            </div>
+          </button>
+        `).join('') : ''}
+      </div>
+      ${!messagesState.loading && messagesState.items.length === 0 && !messagesState.error ? `
+        <div class="messages-empty-state">
+          <strong>Your inbox is empty.</strong>
+          <p>No private conversations are active right now.</p>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  body.innerHTML = inboxMarkup;
+
+  const refreshButton = body.querySelector('[data-action="refresh-messages"]');
+  refreshButton?.addEventListener('click', () => {
+    loadMessagesInbox();
+  });
+
+  const threadButtons = body.querySelectorAll('[data-action="open-message-thread"]');
+  threadButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const threadId = button.getAttribute('data-thread-id');
+      const conversation = messagesState.items.find((entry) => String(entry.threadId) === String(threadId));
+      if (conversation) {
+        openMessageThread(conversation);
+      }
+    });
+  });
+}
+
 function syncFollowSetFromPosts() {
   socialState.followSet = new Set(
     socialState.posts
@@ -294,9 +965,120 @@ function syncFollowSetFromPosts() {
   );
 }
 
+function setFollowStateForAuthor(authorCitizenId, isFollowing) {
+  const normalizedAuthorId = String(authorCitizenId ?? '').trim();
+  if (!normalizedAuthorId) {
+    return;
+  }
+
+  if (isFollowing) {
+    socialState.followSet.add(normalizedAuthorId);
+  } else {
+    socialState.followSet.delete(normalizedAuthorId);
+  }
+
+  socialState.posts.forEach((post) => {
+    if (String(post.authorCitizenId || '') !== normalizedAuthorId) {
+      return;
+    }
+
+    post.currentUserFollowingAuthor = Boolean(isFollowing);
+  });
+}
+
+async function toggleFollowForAuthor(authorCitizenId) {
+  const normalizedAuthorId = String(authorCitizenId ?? '').trim();
+  if (!normalizedAuthorId || socialState.pendingFollowAuthorIds.has(normalizedAuthorId)) {
+    return;
+  }
+
+  const supabase = getAuthClient();
+  if (!supabase) {
+    throw new Error('Social media is unavailable because Supabase is not available.');
+  }
+
+  const previousFollowState = socialState.followSet.has(normalizedAuthorId);
+  const requestKey = normalizedAuthorId;
+  socialState.pendingFollowAuthorIds.add(requestKey);
+  delete socialState.followErrorByAuthor[requestKey];
+  renderSocialApp();
+
+  try {
+    const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+
+    if (!currentCitizenId) {
+      throw new Error('Your citizen profile is not available yet.');
+    }
+
+    if (normalizedAuthorId === currentCitizenId) {
+      throw new Error('You cannot follow your own citizen profile.');
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    if (!sessionData?.session?.user) {
+      throw new Error('You must be signed in to follow someone.');
+    }
+
+    const shouldFollow = !previousFollowState;
+
+    if (shouldFollow) {
+      const { error } = await supabase
+        .from('social_follows')
+        .insert([{ following_citizen_id: normalizedAuthorId }]);
+
+      if (error) {
+        if (error.code === '23505' || /duplicate|already following/i.test(error.message || '')) {
+          setFollowStateForAuthor(normalizedAuthorId, true);
+          if (socialState.profileView?.active && socialState.profileView.targetCitizenId === normalizedAuthorId && socialState.profileView.data) {
+            socialState.profileView.data.current_user_following = true;
+          }
+          return;
+        }
+
+        throw error;
+      }
+
+      setFollowStateForAuthor(normalizedAuthorId, true);
+      if (socialState.profileView?.active && socialState.profileView.targetCitizenId === normalizedAuthorId && socialState.profileView.data) {
+        socialState.profileView.data.current_user_following = true;
+        socialState.profileView.data.follower_count = Math.max(0, Number(socialState.profileView.data.follower_count ?? 0) + 1);
+      }
+    } else {
+      const { error } = await supabase
+        .from('social_follows')
+        .delete()
+        .eq('following_citizen_id', normalizedAuthorId);
+
+      if (error) {
+        throw error;
+      }
+
+      setFollowStateForAuthor(normalizedAuthorId, false);
+      if (socialState.profileView?.active && socialState.profileView.targetCitizenId === normalizedAuthorId && socialState.profileView.data) {
+        socialState.profileView.data.current_user_following = false;
+        socialState.profileView.data.follower_count = Math.max(0, Number(socialState.profileView.data.follower_count ?? 0) - 1);
+      }
+    }
+  } catch (error) {
+    setFollowStateForAuthor(normalizedAuthorId, previousFollowState);
+    const readableError = error?.message || 'Unable to update this follow right now.';
+    socialState.followErrorByAuthor[requestKey] = readableError;
+    console.error('follow toggle failed', error);
+    renderSocialApp();
+    return;
+  } finally {
+    socialState.pendingFollowAuthorIds.delete(requestKey);
+    renderSocialApp();
+  }
+}
+
 function updateSocialPostLikeState(postId, liked, likes) {
   const normalizedPostId = String(postId);
-  const targetPost = socialState.posts.find((post) => String(post.id) === normalizedPostId);
+  const targetPost = findActiveSocialPostById(normalizedPostId);
   if (!targetPost) {
     return;
   }
@@ -329,6 +1111,153 @@ function updateSocialPostLikeState(postId, liked, likes) {
 
 function getVisibleSocialPosts() {
   return Array.isArray(socialState.posts) ? socialState.posts.slice() : [];
+}
+
+function getActiveSocialPosts() {
+  if (socialState.profileView?.active && Array.isArray(socialState.profileView?.data?.posts)) {
+    return socialState.profileView.data.posts;
+  }
+
+  return Array.isArray(socialState.posts) ? socialState.posts : [];
+}
+
+function findActiveSocialPostById(postId) {
+  const normalizedPostId = String(postId ?? '').trim();
+  if (!normalizedPostId) {
+    return null;
+  }
+
+  return getActiveSocialPosts().find((post) => String(post.id) === normalizedPostId) || null;
+}
+
+function openSocialProfileView(targetCitizenId) {
+  const normalizedCitizenId = String(targetCitizenId ?? '').trim();
+  if (!normalizedCitizenId) {
+    return;
+  }
+
+  const nextRequestToken = Number(socialState.profileView?.requestToken || 0) + 1;
+  socialState.profileView = {
+    active: true,
+    targetCitizenId: normalizedCitizenId,
+    data: null,
+    loading: true,
+    error: null,
+    requestToken: nextRequestToken,
+  };
+
+  renderSocialApp();
+}
+
+function closeSocialProfileView() {
+  const nextRequestToken = Number(socialState.profileView?.requestToken || 0) + 1;
+  socialState.profileView = {
+    active: false,
+    targetCitizenId: null,
+    data: null,
+    loading: false,
+    error: null,
+    requestToken: nextRequestToken,
+  };
+
+  renderSocialApp();
+}
+
+async function loadSocialProfileView(targetCitizenId) {
+  const normalizedCitizenId = String(targetCitizenId ?? '').trim();
+  if (!normalizedCitizenId) {
+    return;
+  }
+
+  const requestToken = Number(socialState.profileView?.requestToken || 0) + 1;
+  socialState.profileView = {
+    active: true,
+    targetCitizenId: normalizedCitizenId,
+    data: null,
+    loading: true,
+    error: null,
+    requestToken,
+  };
+
+  renderSocialApp();
+
+  const supabase = getAuthClient();
+  if (!supabase) {
+    if (requestToken !== Number(socialState.profileView?.requestToken || 0)) {
+      return;
+    }
+
+    socialState.profileView = {
+      ...socialState.profileView,
+      loading: false,
+      error: 'Social media is unavailable because Supabase is not available.',
+    };
+    renderSocialApp();
+    return;
+  }
+
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    if (!sessionData?.session?.user) {
+      throw new Error('You must be signed in to view this citizen profile.');
+    }
+
+    const { data, error } = await supabase.rpc('get_citizen_social_profile', {
+      p_citizen_id: normalizedCitizenId,
+    });
+
+    if (requestToken !== Number(socialState.profileView?.requestToken || 0)) {
+      return;
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    const profileRow = Array.isArray(data) ? (data[0] ?? null) : (data ?? null);
+    if (!profileRow) {
+      socialState.profileView = {
+        ...socialState.profileView,
+        loading: false,
+        error: 'This citizen profile could not be found.',
+        data: null,
+      };
+      renderSocialApp();
+      return;
+    }
+
+    const normalizedProfilePosts = Array.isArray(profileRow.posts)
+      ? profileRow.posts.map((post) => normalizeSocialPostRecord(post))
+      : [];
+
+    socialState.profileView = {
+      ...socialState.profileView,
+      loading: false,
+      error: null,
+      data: {
+        ...profileRow,
+        posts: normalizedProfilePosts,
+      },
+    };
+    renderSocialApp();
+  } catch (error) {
+    if (requestToken !== Number(socialState.profileView?.requestToken || 0)) {
+      return;
+    }
+
+    console.error('load social profile failed', error);
+    socialState.profileView = {
+      ...socialState.profileView,
+      loading: false,
+      error: error?.message || 'Unable to load this citizen profile right now.',
+      data: null,
+    };
+    renderSocialApp();
+  }
 }
 
 function getSafeAvatarUrl(url, fallback = './assets/avatars/aurelia-voss.svg') {
@@ -499,6 +1428,120 @@ function invalidateCommentEditRequests() {
   socialState.commentEditErrorByComment = {};
 }
 
+function invalidatePostEditRequest(postId) {
+  if (!postId) {
+    return;
+  }
+
+  const currentToken = Number(socialState.postEditRequestTokenByPost[postId] || 0);
+  socialState.postEditRequestTokenByPost[postId] = currentToken + 1;
+  socialState.postEditOpenByPost[postId] = false;
+  delete socialState.postEditDraftByPost[postId];
+  delete socialState.postEditErrorByPost[postId];
+  if (socialState.postEditBusyByPost[postId]) {
+    socialState.postEditBusyByPost[postId] = false;
+  }
+}
+
+function closePostActionMenu() {
+  socialState.openPostMenuId = null;
+}
+
+function closeDeleteConfirmation() {
+  socialState.deleteConfirmationPostId = null;
+}
+
+async function runDeletePostRequest(postId) {
+  if (!postId || socialState.postDeleteBusyByPost[postId]) {
+    return;
+  }
+
+  const post = findActiveSocialPostById(postId);
+  if (!post) {
+    return;
+  }
+
+  const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+  const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+  if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId) {
+    return;
+  }
+
+  const supabase = getAuthClient();
+  if (!supabase) {
+    socialState.postDeleteErrorByPost[postId] = 'Social media is unavailable because Supabase is not available.';
+    renderSocialApp();
+    return;
+  }
+
+  const requestId = Number(socialState.postDeleteRequestTokenByPost[postId] || 0) + 1;
+  socialState.postDeleteRequestTokenByPost[postId] = requestId;
+  socialState.postDeleteBusyByPost[postId] = true;
+  delete socialState.postDeleteErrorByPost[postId];
+  renderSocialApp();
+
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    if (!sessionData?.session?.user) {
+      throw new Error('User is not authenticated.');
+    }
+
+    if (requestId !== Number(socialState.postDeleteRequestTokenByPost[postId] || 0)) {
+      return;
+    }
+
+    const activePost = findActiveSocialPostById(postId);
+    const currentCitizenStillMatches = activePost && profileState.citizen?.id ? String(profileState.citizen.id) === String(activePost.authorCitizenId || '') : false;
+    if (!activePost || !currentCitizenStillMatches) {
+      invalidatePostEditRequest(postId);
+      return;
+    }
+
+    const { error } = await supabase.rpc('delete_social_post', {
+      p_post_id: postId,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (requestId !== Number(socialState.postDeleteRequestTokenByPost[postId] || 0)) {
+      return;
+    }
+
+    invalidatePostEditRequest(postId);
+
+    const activeCollection = getActiveSocialPosts();
+    const activeIndex = activeCollection.findIndex((entry) => String(entry.id) === postId);
+    if (activeIndex >= 0 && socialState.profileView?.active) {
+      activeCollection.splice(activeIndex, 1);
+    } else if (activeIndex >= 0) {
+      activeCollection.splice(activeIndex, 1);
+    }
+
+    if (!socialState.profileView?.active) {
+      await loadSocialFeed(socialState.activeTab);
+    }
+  } catch (error) {
+    if (requestId !== Number(socialState.postDeleteRequestTokenByPost[postId] || 0)) {
+      return;
+    }
+
+    console.error('delete social post failed', error);
+    socialState.postDeleteErrorByPost[postId] = error?.message || 'Unable to delete the post right now.';
+    renderSocialApp();
+  } finally {
+    if (requestId === Number(socialState.postDeleteRequestTokenByPost[postId] || 0)) {
+      socialState.postDeleteBusyByPost[postId] = false;
+      renderSocialApp();
+    }
+  }
+}
+
 function invalidateCommentDeleteRequests() {
   Object.keys(socialState.commentDeleteRequestTokenByComment).forEach((commentId) => {
     socialState.commentDeleteRequestTokenByComment[commentId] = Number(socialState.commentDeleteRequestTokenByComment[commentId] || 0) + 1;
@@ -507,9 +1550,303 @@ function invalidateCommentDeleteRequests() {
   socialState.commentDeleteErrorByComment = {};
 }
 
+function bindSocialFollowButtons(body) {
+  if (!body) {
+    return;
+  }
+
+  body.querySelectorAll('[data-follow-author-id]').forEach((button) => {
+    if (button.dataset.followBindingAttached === 'true') {
+      return;
+    }
+
+    button.dataset.followBindingAttached = 'true';
+    button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      const authorCitizenId = String(button.dataset.followAuthorId || '').trim();
+      if (!authorCitizenId || button.disabled) {
+        return;
+      }
+
+      try {
+        await toggleFollowForAuthor(authorCitizenId);
+      } catch (error) {
+        console.error('follow toggle failed', error);
+      }
+    });
+  });
+}
+
+async function startProfileMessageAction(targetCitizenId, profileName, profileAvatarUrl) {
+  const normalizedTargetCitizenId = String(targetCitizenId ?? '').trim();
+  if (!normalizedTargetCitizenId) {
+    return;
+  }
+
+  const currentCitizenId = profileState?.citizen?.id ? String(profileState.citizen.id) : null;
+  if (!currentCitizenId || normalizedTargetCitizenId === currentCitizenId) {
+    return;
+  }
+
+  if (socialState.profileMessageBusyByCitizen[normalizedTargetCitizenId]) {
+    return;
+  }
+
+  socialState.profileMessageBusyByCitizen[normalizedTargetCitizenId] = true;
+  renderSocialApp();
+
+  const supabase = getAuthClient();
+  if (!supabase) {
+    delete socialState.profileMessageBusyByCitizen[normalizedTargetCitizenId];
+    renderSocialApp();
+    return;
+  }
+
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    if (!sessionData?.session?.user) {
+      throw new Error('You must be signed in to message this citizen.');
+    }
+
+    const activeCitizenId = profileState?.citizen?.id ? String(profileState.citizen.id) : null;
+    if (!activeCitizenId || activeCitizenId !== currentCitizenId) {
+      throw new Error('Your citizen profile is not available.');
+    }
+
+    const { data: threadMatches, error: threadLookupError } = await supabase
+      .from('message_threads')
+      .select('id, participant_a_citizen_id, participant_b_citizen_id')
+      .or(`participant_a_citizen_id.eq.${activeCitizenId},participant_b_citizen_id.eq.${activeCitizenId}`);
+
+    if (threadLookupError) {
+      throw threadLookupError;
+    }
+
+    const existingThread = Array.isArray(threadMatches)
+      ? threadMatches.find((thread) => {
+          const participantA = String(thread?.participant_a_citizen_id ?? '');
+          const participantB = String(thread?.participant_b_citizen_id ?? '');
+          return (participantA === activeCitizenId && participantB === normalizedTargetCitizenId)
+            || (participantA === normalizedTargetCitizenId && participantB === activeCitizenId);
+        })
+      : null;
+
+    let threadId = existingThread?.id ?? null;
+    if (!threadId) {
+      const { data: createdThread, error: insertError } = await supabase
+        .from('message_threads')
+        .insert({
+          participant_a_citizen_id: activeCitizenId,
+          participant_b_citizen_id: normalizedTargetCitizenId,
+        })
+        .select('id')
+        .single();
+
+      if (insertError) {
+        const messageText = String(insertError?.message || '');
+        const isUniqueConflict = /duplicate|unique|23505|already exists/i.test(messageText);
+        if (!isUniqueConflict) {
+          throw insertError;
+        }
+
+        const { data: retryMatches, error: retryError } = await supabase
+          .from('message_threads')
+          .select('id, participant_a_citizen_id, participant_b_citizen_id')
+          .or(`participant_a_citizen_id.eq.${activeCitizenId},participant_b_citizen_id.eq.${activeCitizenId}`);
+
+        if (retryError) {
+          throw retryError;
+        }
+
+        const retryThread = Array.isArray(retryMatches)
+          ? retryMatches.find((thread) => {
+              const participantA = String(thread?.participant_a_citizen_id ?? '');
+              const participantB = String(thread?.participant_b_citizen_id ?? '');
+              return (participantA === activeCitizenId && participantB === normalizedTargetCitizenId)
+                || (participantA === normalizedTargetCitizenId && participantB === activeCitizenId);
+            })
+          : null;
+
+        if (!retryThread) {
+          throw new Error('Conversation could not be created.');
+        }
+
+        threadId = retryThread.id;
+      } else {
+        threadId = createdThread?.id ?? null;
+      }
+    }
+
+    if (!threadId) {
+      throw new Error('Conversation is unavailable.');
+    }
+
+    openApp('messages');
+    openMessageThread({
+      threadId,
+      partnerCitizenId: normalizedTargetCitizenId,
+      partnerName: String(profileName || 'Citizen').trim() || 'Citizen',
+      avatar: getSafeAvatarUrl(profileAvatarUrl || './assets/avatars/aurelia-voss.svg'),
+    });
+  } catch (error) {
+    console.error('profile message action failed', error);
+  } finally {
+    delete socialState.profileMessageBusyByCitizen[normalizedTargetCitizenId];
+    renderSocialApp();
+  }
+}
+
 function renderSocialApp() {
   const appWindow = ensureAppWindow('social');
   const body = appWindow.querySelector('.app-body');
+  const profileView = socialState.profileView || {
+    active: false,
+    targetCitizenId: null,
+    data: null,
+    loading: false,
+    error: null,
+    requestToken: 0,
+  };
+
+  if (profileView.active) {
+    const profileHeading = profileView.loading
+      ? 'Loading citizen profile…'
+      : profileView.error
+        ? 'Citizen profile unavailable'
+        : (profileView.data?.public_name || 'Citizen profile');
+    const profileAvatarUrl = getSafeAvatarUrl(profileView.data?.avatar_url || './assets/avatars/aurelia-voss.svg');
+    const profilePosts = Array.isArray(profileView.data?.posts) ? profileView.data.posts : [];
+    const registrationDate = profileView.data?.registration_date
+      ? new Date(profileView.data.registration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'Recent';
+    const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+    const profileTargetCitizenId = profileView.targetCitizenId ? String(profileView.targetCitizenId) : null;
+    const isOwnProfile = Boolean(profileTargetCitizenId && currentCitizenId && profileTargetCitizenId === currentCitizenId);
+    const isFollowingProfile = Boolean(profileView.data?.current_user_following || (profileTargetCitizenId && socialState.followSet.has(profileTargetCitizenId)));
+    const profileFollowPending = Boolean(profileTargetCitizenId && socialState.pendingFollowAuthorIds.has(profileTargetCitizenId));
+    const profileFollowLabel = profileFollowPending
+      ? (isFollowingProfile ? 'Unfollowing...' : 'Following...')
+      : (isFollowingProfile ? 'Unfollow' : 'Follow');
+    const profileFollowTitle = isFollowingProfile
+      ? 'Click to unfollow this citizen'
+      : 'Follow this citizen';
+    const profileMessageBusy = Boolean(profileTargetCitizenId && socialState.profileMessageBusyByCitizen[profileTargetCitizenId]);
+    const profileHeaderActions = !isOwnProfile && profileTargetCitizenId && !profileView.loading && !profileView.error ? `
+      <button
+        type="button"
+        class="secondary-button"
+        data-social-action="message-profile"
+        data-target-citizen-id="${escapeHtml(profileTargetCitizenId)}"
+        title="Send a message to this citizen"
+        ${profileMessageBusy ? 'disabled aria-disabled="true"' : ''}
+      >${profileMessageBusy ? 'Opening…' : 'Message'}</button>
+      <button
+        type="button"
+        class="secondary-button social-follow-toggle ${isFollowingProfile ? 'following' : ''}"
+        data-social-action="toggle-profile-follow"
+        data-follow-author-id="${escapeHtml(profileTargetCitizenId)}"
+        title="${escapeHtml(profileFollowTitle)}"
+        ${profileFollowPending ? 'disabled aria-disabled="true"' : ''}
+      >${profileFollowLabel}</button>
+    ` : '';
+
+    const profileBody = profileView.loading
+      ? `
+        <div class="mylife-alert">
+          <span>Loading profile</span>
+          <p>Retrieving the citizen profile…</p>
+        </div>
+      `
+      : profileView.error
+        ? `
+          <div class="mylife-alert">
+            <span>Profile unavailable</span>
+            <p>${escapeHtml(profileView.error)}</p>
+          </div>
+        `
+        : `
+          <div class="mylife-panel">
+            <div class="mylife-overview-grid">
+              <div class="mylife-stat-row"><span>Followers</span><strong>${escapeHtml(String(profileView.data?.follower_count ?? 0))}</strong></div>
+              <div class="mylife-stat-row"><span>Political party</span><strong>${escapeHtml(profileView.data?.political_party || 'Independent')}</strong></div>
+              <div class="mylife-stat-row"><span>Social class</span><strong>${escapeHtml(profileView.data?.social_class || 'Unknown')}</strong></div>
+              <div class="mylife-stat-row"><span>Career</span><strong>${escapeHtml(getDisplayProfession(profileView.data?.profession, 'Unknown'))}</strong></div>
+              <div class="mylife-stat-row"><span>Registration date</span><strong>${escapeHtml(registrationDate)}</strong></div>
+            </div>
+          </div>
+
+          ${profilePosts.length ? `
+            <div class="mylife-panel">
+              <div class="mylife-panel-header compact">
+                <div>
+                  <div class="section-kicker">Recent posts</div>
+                  <h3>Latest activity</h3>
+                </div>
+              </div>
+              <div class="social-feed">
+                ${profilePosts.map((post) => {
+                  const author = post?.author || {};
+                  const authorName = author.public_name || 'Citizen';
+                  const authorAvatar = getSafeAvatarUrl(author.avatar_url || './assets/avatars/aurelia-voss.svg');
+                  const postId = String(post?.id ?? '');
+                  const content = String(post?.content ?? '');
+                  const createdAt = post?.created_at ? formatSocialTimestamp(post.created_at) : 'Recent';
+                  const likeCount = Number(post?.like_count ?? 0) || 0;
+                  const commentCount = Number(post?.comment_count ?? 0) || 0;
+
+                  return `
+                    <article class="social-post" data-post-id="${escapeHtml(postId)}">
+                      <div class="social-post-header">
+                        <div class="social-post-author">
+                          <div class="social-post-avatar" style="background-image: url('${escapeHtml(authorAvatar)}')"></div>
+                          <div>
+                            <strong>${escapeHtml(authorName)}</strong>
+                            <span>@${escapeHtml(String(authorName).toLowerCase().replace(/\s+/g, ''))} · ${escapeHtml(createdAt)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <p class="social-post-copy">${escapeHtml(content)}</p>
+                      <div class="social-post-metrics">
+                        <span>${likeCount} likes</span>
+                        <span>${commentCount} comments</span>
+                      </div>
+                    </article>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          ` : `
+            <div class="mylife-alert">
+              <span>No posts yet</span>
+              <p>This citizen has not posted anything recent.</p>
+            </div>
+          `}
+        `;
+
+    body.innerHTML = `
+      <div class="social-shell">
+        <div class="social-profile-card">
+          <div class="social-avatar" style="background-image: url('${escapeHtml(profileAvatarUrl)}')"></div>
+          <div class="social-profile-copy">
+            <strong>${escapeHtml(profileHeading)}</strong>
+            <span>${escapeHtml(profileView.targetCitizenId ? `Citizen ${profileView.targetCitizenId}` : 'Citizen profile')}</span>
+          </div>
+          <div class="social-profile-actions">
+            ${profileHeaderActions}
+            <button type="button" class="secondary-button" data-social-action="close-profile-view">Back to Feed</button>
+          </div>
+        </div>
+        ${profileBody}
+      </div>
+    `;
+    bindSocialFollowButtons(body);
+    return;
+  }
+
   const currentUserName = profileState.citizen?.public_name || player.name || 'Aurelia Voss';
   const currentUserHandle = '@' + String(currentUserName).toLowerCase().replace(/\s+/g, '');
   const rawCurrentUserAvatar = getCitizenAvatarUrl(profileState.citizen || null);
@@ -560,46 +1897,144 @@ function renderSocialApp() {
   } else {
     feedMarkup = visiblePosts
       .map((post) => {
-        const isFollowing = post.isCurrentUser || post.currentUserFollowingAuthor || socialState.followSet.has(post.authorCitizenId);
+        const authorCitizenId = String(post.authorCitizenId || '');
+        const isFollowing = post.isCurrentUser || post.currentUserFollowingAuthor || socialState.followSet.has(authorCitizenId);
+        const followError = authorCitizenId ? socialState.followErrorByAuthor[authorCitizenId] || null : null;
+        const followPending = Boolean(authorCitizenId && socialState.pendingFollowAuthorIds.has(authorCitizenId));
+        const followButtonLabel = followPending
+          ? (isFollowing ? 'Following…' : 'Follow…')
+          : (isFollowing ? 'Following' : 'Follow');
+        const followButtonTitle = followError
+          ? `Follow failed: ${followError}`
+          : (isFollowing ? 'Click to unfollow this citizen' : 'Follow this citizen');
         const likeLabel = post.liked ? 'Liked' : 'Like';
-        const repostLabel = post.reposted ? 'Reposted' : 'Repost';
         const postId = escapeHtml(String(post.id));
+        const normalizedPostId = String(post.id ?? '');
         const postAuthor = escapeHtml(post.author);
         const postHandle = escapeHtml(post.handle);
         const postContent = escapeHtml(post.content);
         const postAvatar = escapeHtml(post.avatar);
-        const authorCitizenId = escapeHtml(String(post.authorCitizenId || ''));
+        const escapedAuthorCitizenId = escapeHtml(authorCitizenId);
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+        const isOwnPost = Boolean(currentCitizenId && postOwnerCitizenId && postOwnerCitizenId === currentCitizenId);
+        const shouldRenderFollowButton = !isOwnPost && Boolean(authorCitizenId);
+        const isEditing = Boolean(socialState.postEditOpenByPost[normalizedPostId]);
+        const editDraft = socialState.postEditDraftByPost[normalizedPostId] ?? post.content;
+        const editDraftLength = Array.from(String(editDraft || '')).length;
+        const editTrimmedLength = Array.from(String(editDraft ?? '').replace(/^\s+|\s+$/g, '')).length;
+        const editError = socialState.postEditErrorByPost[normalizedPostId] || null;
+        const isBusy = Boolean(socialState.postEditBusyByPost[normalizedPostId]);
         const likePending = socialState.pendingLikePostIds.has(String(post.id));
+        const isDeleteBusy = Boolean(socialState.postDeleteBusyByPost[normalizedPostId]);
+        const deleteError = socialState.postDeleteErrorByPost[normalizedPostId] || null;
+        const isPostMenuOpen = socialState.openPostMenuId === normalizedPostId;
 
         return `
           <article class="social-post" data-post-id="${postId}">
             <div class="social-post-header">
-              <div class="social-post-author">
+              <button
+                type="button"
+                class="social-post-author social-author-button"
+                data-social-action="open-citizen-profile"
+                data-citizen-id="${escapedAuthorCitizenId}"
+                aria-label="Open ${postAuthor}'s profile"
+                style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
+              >
                 <div class="social-post-avatar" style="background-image: url('${postAvatar}')"></div>
                 <div>
                   <strong>${postAuthor}</strong>
                   <span>${postHandle} · ${escapeHtml(formatSocialTimestamp(post.createdAt))}</span>
                 </div>
-              </div>
-              <button
-                type="button"
-                class="social-follow-toggle ${isFollowing ? 'following' : ''}"
-                data-follow-author-id="${authorCitizenId}"
-                data-social-prototype="true"
-                title="Unavailable: database write functions are not available yet."
-                disabled
-                aria-disabled="true"
-              >
-                ${isFollowing ? 'Following' : 'Follow'}
               </button>
+              <div class="social-post-header-actions">
+                ${shouldRenderFollowButton ? `
+                  <div class="social-follow-wrap">
+                    <button
+                      type="button"
+                      class="social-follow-toggle ${isFollowing ? 'following' : ''}"
+                      data-follow-author-id="${escapedAuthorCitizenId}"
+                      title="${escapeHtml(followButtonTitle)}"
+                      ${followPending ? 'disabled' : ''}
+                      aria-disabled="${String(Boolean(followPending))}"
+                    >
+                      ${followButtonLabel}
+                    </button>
+                    ${followError ? `<div class="social-post-editor-error">${escapeHtml(followError)}</div>` : ''}
+                  </div>
+                ` : ''}
+                ${isOwnPost ? `
+                  <div class="social-post-menu-wrap">
+                    <button
+                      type="button"
+                      class="social-post-menu-button"
+                      data-social-action="toggle-post-menu"
+                      data-post-id="${postId}"
+                      aria-label="${isPostMenuOpen ? 'Close post actions menu' : 'Open post actions menu'}"
+                      aria-expanded="${String(Boolean(isPostMenuOpen))}"
+                      aria-haspopup="menu"
+                    >
+                      <span aria-hidden="true">⋮</span>
+                    </button>
+                    ${isPostMenuOpen ? `
+                      <div class="social-post-menu" role="menu" aria-label="Post actions menu">
+                        <button
+                          type="button"
+                          class="social-post-menu-item"
+                          data-social-action="edit-post"
+                          data-post-id="${postId}"
+                          role="menuitem"
+                        >Edit post</button>
+                        <button
+                          type="button"
+                          class="social-post-menu-item danger"
+                          data-social-action="request-delete-post"
+                          data-post-id="${postId}"
+                          role="menuitem"
+                        >Delete post</button>
+                      </div>
+                    ` : ''}
+                  </div>
+                ` : ''}
+              </div>
             </div>
 
-            <p class="social-post-copy">${postContent}</p>
+            ${isOwnPost && isEditing ? `
+              <div class="social-post-editor">
+                <textarea
+                  data-post-edit-input="${postId}"
+                  rows="4"
+                  aria-label="Edit post"
+                  ${isBusy ? 'disabled aria-disabled="true"' : ''}
+                >${escapeHtml(editDraft)}</textarea>
+                <div class="social-post-editor-actions">
+                  <span data-post-edit-counter="${postId}">${editDraftLength} / 280</span>
+                  <div class="social-post-editor-buttons">
+                    <button
+                      type="button"
+                      class="social-action"
+                      data-social-action="cancel-edit-post"
+                      data-post-id="${postId}"
+                      data-social-prototype="true"
+                      ${isBusy ? 'disabled aria-disabled="true"' : ''}
+                    >Cancel</button>
+                    <button
+                      type="button"
+                      class="social-action"
+                      data-social-action="save-edit-post"
+                      data-post-id="${postId}"
+                      data-social-prototype="true"
+                      ${isBusy || editTrimmedLength === 0 || editDraftLength > 280 ? 'disabled aria-disabled="true"' : ''}
+                    >${isBusy ? 'Saving...' : 'Save'}</button>
+                  </div>
+                </div>
+                ${editError ? `<div class="social-post-editor-error">${escapeHtml(editError)}</div>` : ''}
+              </div>
+            ` : `<p class="social-post-copy">${postContent}</p>`}
 
             <div class="social-post-metrics">
               <span>${post.likes} likes</span>
               <span>${post.comments} comments</span>
-              <span>${post.reposts} reposts</span>
             </div>
 
             <div class="social-post-actions">
@@ -621,16 +2056,7 @@ function renderSocialApp() {
                 data-social-prototype="true"
                 title="Open comments for this post"
               >Comment · ${post.comments}</button>
-              <button
-                type="button"
-                class="social-action ${post.reposted ? 'active' : ''}"
-                data-social-action="repost"
-                data-post-id="${postId}"
-                data-social-prototype="true"
-                title="Unavailable: database write functions are not available yet."
-                disabled
-                aria-disabled="true"
-              >${repostLabel} · ${post.reposts}</button>
+              ${deleteError ? `<div class="social-post-editor-error">${escapeHtml(deleteError)}</div>` : ''}
             </div>
           </article>
         `;
@@ -641,6 +2067,37 @@ function renderSocialApp() {
   const composerDraftValue = escapeHtml(socialState.composerDraft ?? '');
   const composerLength = Array.from(socialState.composerDraft ?? '').length;
   const composerDisabled = socialState.composerBusy;
+  const deleteConfirmationPostId = socialState.deleteConfirmationPostId ? String(socialState.deleteConfirmationPostId) : null;
+  const deleteConfirmationPost = deleteConfirmationPostId
+    ? visiblePosts.find((post) => String(post.id) === deleteConfirmationPostId) || null
+    : null;
+  const deleteConfirmationMarkup = deleteConfirmationPost ? `
+    <div class="social-post-confirm-overlay" aria-hidden="false">
+      <div class="social-post-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="social-delete-confirm-title">
+        <div class="social-post-confirm-header">
+          <span class="section-kicker">Confirm action</span>
+          <h3 id="social-delete-confirm-title">Delete post</h3>
+        </div>
+        <p>Deleting this post removes it from the social feed for everyone.</p>
+        <div class="social-post-confirm-actions">
+          <button
+            type="button"
+            class="social-post-confirm-button secondary"
+            data-social-action="cancel-delete-post"
+            data-post-id="${escapeHtml(deleteConfirmationPostId)}"
+          >Cancel</button>
+          <button
+            type="button"
+            class="social-post-confirm-button danger"
+            data-social-action="delete-post"
+            data-post-id="${escapeHtml(deleteConfirmationPostId)}"
+            data-confirm-delete="true"
+            ${socialState.postDeleteBusyByPost[deleteConfirmationPostId] ? 'disabled aria-disabled="true"' : ''}
+          >${socialState.postDeleteBusyByPost[deleteConfirmationPostId] ? 'Deleting...' : 'Delete'}</button>
+        </div>
+      </div>
+    </div>
+  ` : '';
 
   body.innerHTML = `
     <div class="social-shell">
@@ -832,6 +2289,7 @@ function renderSocialApp() {
         </aside>
       ` : ''}
     </div>
+    ${deleteConfirmationMarkup}
   `;
 
   body.querySelectorAll('[data-social-tab]').forEach((button) => {
@@ -841,10 +2299,36 @@ function renderSocialApp() {
         return;
       }
 
+      Object.keys(socialState.postEditOpenByPost).forEach((postId) => {
+        invalidatePostEditRequest(postId);
+      });
+      closePostActionMenu();
+      closeDeleteConfirmation();
       socialState.activeTab = nextTab;
       await loadSocialFeed(nextTab);
     });
   });
+
+  const confirmDeleteButtons = body.querySelectorAll('[data-social-action="delete-post"][data-confirm-delete="true"], [data-social-action="cancel-delete-post"]');
+  if (confirmDeleteButtons.length) {
+    confirmDeleteButtons.forEach((button) => {
+      button.addEventListener('click', async (event) => {
+        const action = event.currentTarget.dataset.socialAction;
+        const postId = String(event.currentTarget.dataset.postId || '').trim();
+        if (!postId) {
+          return;
+        }
+
+        if (action === 'cancel-delete-post') {
+          closeDeleteConfirmation();
+          renderSocialApp();
+          return;
+        }
+
+        await runDeletePostRequest(postId);
+      });
+    });
+  }
 
   const composerForm = body.querySelector('#socialComposerForm');
   const composerTextarea = composerForm ? composerForm.querySelector('textarea') : null;
@@ -934,7 +2418,352 @@ function renderSocialApp() {
     });
   }
 
+  if (body && !body.dataset.profileViewNavigationBound) {
+    body.dataset.profileViewNavigationBound = 'true';
+    body.addEventListener('click', async (event) => {
+      const closeProfileButton = event.target.closest('[data-social-action="close-profile-view"]');
+      if (closeProfileButton) {
+        closeSocialProfileView();
+      }
+
+      const messageProfileButton = event.target.closest('[data-social-action="message-profile"]');
+      if (messageProfileButton) {
+        event.preventDefault();
+        const targetCitizenId = String(messageProfileButton.dataset.targetCitizenId || '').trim();
+        if (!targetCitizenId || socialState.profileMessageBusyByCitizen[targetCitizenId]) {
+          return;
+        }
+
+        const profileName = profileView.data?.public_name || 'Citizen';
+        const profileAvatarUrl = profileView.data?.avatar_url || './assets/avatars/aurelia-voss.svg';
+        await startProfileMessageAction(targetCitizenId, profileName, profileAvatarUrl);
+      }
+    });
+  }
+
   const socialFeed = body.querySelector('.social-feed');
+
+  if (socialFeed && !socialFeed.dataset.postEditDelegationBound) {
+    socialFeed.dataset.postEditDelegationBound = 'true';
+    socialFeed.addEventListener('click', async (event) => {
+      const profileOpenButton = event.target.closest('[data-social-action="open-citizen-profile"]');
+      if (profileOpenButton) {
+        const targetCitizenId = String(profileOpenButton.dataset.citizenId || '').trim();
+        if (!targetCitizenId) {
+          return;
+        }
+
+        await loadSocialProfileView(targetCitizenId);
+        return;
+      }
+
+      const menuToggle = event.target.closest('[data-social-action="toggle-post-menu"]');
+      if (menuToggle) {
+        const postId = String(menuToggle.dataset.postId || '').trim();
+        if (!postId) {
+          return;
+        }
+
+        const post = findActiveSocialPostById(postId);
+        if (!post) {
+          return;
+        }
+
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+        if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId) {
+          return;
+        }
+
+        socialState.openPostMenuId = socialState.openPostMenuId === postId ? null : postId;
+        if (socialState.openPostMenuId) {
+          socialState.deleteConfirmationPostId = null;
+        }
+        renderSocialApp();
+        return;
+      }
+
+      const menuRequestDelete = event.target.closest('[data-social-action="request-delete-post"]');
+      if (menuRequestDelete) {
+        const postId = String(menuRequestDelete.dataset.postId || '').trim();
+        if (!postId || socialState.postDeleteBusyByPost[postId]) {
+          return;
+        }
+
+        socialState.openPostMenuId = null;
+        socialState.deleteConfirmationPostId = postId;
+        renderSocialApp();
+        return;
+      }
+
+      const cancelDeleteButton = event.target.closest('[data-social-action="cancel-delete-post"]');
+      if (cancelDeleteButton) {
+        closeDeleteConfirmation();
+        renderSocialApp();
+        return;
+      }
+
+      const editButton = event.target.closest('[data-social-action="edit-post"]');
+      if (editButton) {
+        const postId = String(editButton.dataset.postId || '').trim();
+        if (!postId) {
+          return;
+        }
+
+        const post = findActiveSocialPostById(postId);
+        if (!post) {
+          return;
+        }
+
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+        if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId) {
+          return;
+        }
+
+        closePostActionMenu();
+        socialState.postEditOpenByPost[postId] = true;
+        socialState.postEditDraftByPost[postId] = String(post.content ?? '');
+        socialState.postEditErrorByPost[postId] = null;
+        renderSocialApp();
+        return;
+      }
+
+      const cancelButton = event.target.closest('[data-social-action="cancel-edit-post"]');
+      if (cancelButton) {
+        const postId = String(cancelButton.dataset.postId || '').trim();
+        if (!postId) {
+          return;
+        }
+
+        const post = findActiveSocialPostById(postId);
+        if (!post) {
+          return;
+        }
+
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+        if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId) {
+          return;
+        }
+
+        invalidatePostEditRequest(postId);
+        renderSocialApp();
+        return;
+      }
+
+      const deleteButton = event.target.closest('[data-social-action="delete-post"]');
+      if (deleteButton) {
+        const postId = String(deleteButton.dataset.postId || '').trim();
+        if (!postId || socialState.postDeleteBusyByPost[postId]) {
+          return;
+        }
+
+        const post = findActiveSocialPostById(postId);
+        if (!post) {
+          return;
+        }
+
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+        if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId) {
+          return;
+        }
+
+        const isConfirmationTrigger = deleteButton.dataset.confirmDelete === 'true' || socialState.deleteConfirmationPostId === postId;
+        if (!isConfirmationTrigger) {
+          socialState.openPostMenuId = null;
+          socialState.deleteConfirmationPostId = postId;
+          renderSocialApp();
+          return;
+        }
+
+        closeDeleteConfirmation();
+        await runDeletePostRequest(postId);
+        return;
+      }
+
+      const saveButton = event.target.closest('[data-social-action="save-edit-post"]');
+      if (saveButton) {
+        const postId = String(saveButton.dataset.postId || '').trim();
+        if (!postId || socialState.postEditBusyByPost[postId]) {
+          return;
+        }
+
+        const post = findActiveSocialPostById(postId);
+        if (!post) {
+          return;
+        }
+
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+        if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId || !socialState.postEditOpenByPost[postId]) {
+          invalidatePostEditRequest(postId);
+          renderSocialApp();
+          return;
+        }
+
+        const draft = String(socialState.postEditDraftByPost[postId] ?? '');
+        const trimmedDraft = draft.replace(/^\s+|\s+$/g, '');
+        const draftLength = Array.from(draft).length;
+        if (!trimmedDraft || draftLength > 280) {
+          socialState.postEditErrorByPost[postId] = trimmedDraft ? 'Post exceeds 280 characters.' : 'Post content is required.';
+          renderSocialApp();
+          return;
+        }
+
+        const supabase = getAuthClient();
+        if (!supabase) {
+          socialState.postEditErrorByPost[postId] = 'Social media is unavailable because Supabase is not available.';
+          renderSocialApp();
+          return;
+        }
+
+        const requestId = Number(socialState.postEditRequestTokenByPost[postId] || 0) + 1;
+        socialState.postEditRequestTokenByPost[postId] = requestId;
+        socialState.postEditBusyByPost[postId] = true;
+        socialState.postEditErrorByPost[postId] = null;
+        renderSocialApp();
+
+        try {
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError) {
+            throw sessionError;
+          }
+
+          if (!sessionData?.session?.user) {
+            throw new Error('User is not authenticated.');
+          }
+
+          if (requestId !== Number(socialState.postEditRequestTokenByPost[postId] || 0)) {
+            return;
+          }
+
+          const { error } = await supabase.rpc('update_social_post', {
+            p_post_id: postId,
+            p_content: trimmedDraft,
+          });
+
+          if (error) {
+            throw error;
+          }
+
+          if (requestId !== Number(socialState.postEditRequestTokenByPost[postId] || 0)) {
+            return;
+          }
+
+          socialState.postEditOpenByPost[postId] = false;
+          delete socialState.postEditDraftByPost[postId];
+          delete socialState.postEditErrorByPost[postId];
+          await loadSocialFeed(socialState.activeTab);
+        } catch (error) {
+          if (requestId !== Number(socialState.postEditRequestTokenByPost[postId] || 0)) {
+            return;
+          }
+
+          console.error('update social post failed', error);
+          socialState.postEditErrorByPost[postId] = error?.message || 'Unable to save the post right now.';
+          renderSocialApp();
+        } finally {
+          if (requestId === Number(socialState.postEditRequestTokenByPost[postId] || 0)) {
+            socialState.postEditBusyByPost[postId] = false;
+            renderSocialApp();
+          }
+        }
+      }
+    });
+
+    socialFeed.addEventListener('input', (event) => {
+      const textarea = event.target.closest('[data-post-edit-input]');
+      if (!textarea) {
+        return;
+      }
+
+      const postId = String(textarea.dataset.postEditInput || '').trim();
+      if (!postId) {
+        return;
+      }
+
+      const post = findActiveSocialPostById(postId);
+      if (!post) {
+        return;
+      }
+
+      const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+      const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
+      if (!currentCitizenId || !postOwnerCitizenId || postOwnerCitizenId !== currentCitizenId) {
+        invalidatePostEditRequest(postId);
+        renderSocialApp();
+        return;
+      }
+
+      const nextValue = String(event.target.value || '');
+      const limitedValue = Array.from(nextValue).slice(0, 280).join('');
+      socialState.postEditDraftByPost[postId] = limitedValue;
+      delete socialState.postEditErrorByPost[postId];
+
+      const editorContainer = textarea.closest('.social-post-editor');
+      if (editorContainer) {
+        const counter = editorContainer.querySelector('[data-post-edit-counter]');
+        if (counter) {
+          counter.textContent = `${Array.from(limitedValue).length} / 280`;
+        }
+
+        const saveButton = editorContainer.querySelector('[data-social-action="save-edit-post"]');
+        if (saveButton) {
+          const trimmedValue = limitedValue.replace(/^\s+|\s+$/g, '');
+          const isDisabled = Boolean(socialState.postEditBusyByPost[postId]) || trimmedValue.length === 0 || Array.from(limitedValue).length > 280;
+          saveButton.disabled = isDisabled;
+          saveButton.setAttribute('aria-disabled', String(isDisabled));
+        }
+      }
+
+      event.target.value = limitedValue;
+    });
+  }
+
+  if (!document.body.dataset.socialPostOutsideDismissBound) {
+    document.body.dataset.socialPostOutsideDismissBound = 'true';
+    document.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (target.closest('.social-post-menu') || target.closest('[data-social-action="toggle-post-menu"]') || target.closest('[data-social-action="request-delete-post"]') || target.closest('[data-social-action="edit-post"]') || target.closest('[data-social-action="cancel-delete-post"]') || target.closest('[data-social-action="delete-post"]') || target.closest('.social-post-confirm-dialog')) {
+        return;
+      }
+
+      if (target.closest('.social-post-confirm-overlay')) {
+        closeDeleteConfirmation();
+        renderSocialApp();
+        return;
+      }
+
+      if (socialState.openPostMenuId || socialState.deleteConfirmationPostId) {
+        closePostActionMenu();
+        closeDeleteConfirmation();
+        renderSocialApp();
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      if (socialState.deleteConfirmationPostId) {
+        closeDeleteConfirmation();
+        renderSocialApp();
+        return;
+      }
+
+      if (socialState.openPostMenuId) {
+        closePostActionMenu();
+        renderSocialApp();
+      }
+    });
+  }
 
   if (socialFeed && !socialFeed.dataset.commentDelegationBound) {
     socialFeed.dataset.commentDelegationBound = 'true';
@@ -999,7 +2828,7 @@ function renderSocialApp() {
         return;
       }
 
-      const post = socialState.posts.find((entry) => String(entry.id) === postId);
+      const post = findActiveSocialPostById(postId);
       if (!post) {
         return;
       }
@@ -1175,7 +3004,7 @@ function renderSocialApp() {
         }
 
         if (!successHandled) {
-          const targetPost = socialState.posts.find((entry) => String(entry.id) === selectedPostId);
+          const targetPost = findActiveSocialPostById(selectedPostId);
           if (targetPost) {
             targetPost.comments = Math.max(0, Number(targetPost.comments || 0) + 1);
           }
@@ -1328,7 +3157,7 @@ function renderSocialApp() {
           }
 
           socialState.commentsByPost[selectedPostId] = (socialState.commentsByPost[selectedPostId] || []).filter((entry) => String(entry.id) !== commentId);
-          const targetPost = socialState.posts.find((entry) => String(entry.id) === selectedPostId);
+          const targetPost = findActiveSocialPostById(selectedPostId);
           if (targetPost) {
             targetPost.comments = Math.max(0, Number(targetPost.comments || 0) - 1);
           }
@@ -1506,12 +3335,8 @@ function renderSocialApp() {
     });
   }
 
-  body.querySelectorAll('[data-follow-author-id]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      return;
-    });
-  });
+  bindSocialFollowButtons(body);
+
 }
 
 function applyCitizenProfile(citizen) {
@@ -1555,7 +3380,7 @@ function renderPlayerDetails() {
   }
 
   if (profileRole) {
-    const profession = profileState.private?.profession || 'Profile unavailable';
+    const profession = getDisplayProfession(profileState.private?.profession, 'Profile unavailable');
     profileRole.textContent = profession;
   }
 
@@ -1814,13 +3639,21 @@ function renderAppContent(appId, mode = 'normal') {
     return;
   }
 
+  if (appId === 'messages') {
+    renderMessagesApp();
+    if (!messagesState.loading) {
+      loadMessagesInbox();
+    }
+    return;
+  }
+
   if (appId === 'mylife') {
     const citizen = profileState.citizen || {};
     const privateRecord = profileState.private || {};
     const avatarUrl = getCitizenAvatarUrl(citizen);
     const displayName = citizen.public_name || player.name;
     const party = citizen.political_party || player.party;
-    const profession = privateRecord.profession || 'Profile unavailable';
+    const profession = getDisplayProfession(privateRecord.profession, 'Profile unavailable');
     const socialClass = privateRecord.social_class || 'Profile unavailable';
     const education = privateRecord.education || 'Profile unavailable';
     const accountStatus = privateRecord.account_status || 'Unavailable';
@@ -2430,6 +4263,7 @@ async function handleAuthSession() {
 
     const citizenStatus = await checkCitizenRecord(session);
     if (citizenStatus === null) {
+      showAuthView('login');
       return;
     }
 
@@ -2843,6 +4677,9 @@ function closeSettingsMenu() {
 }
 
 function initializePhone() {
+  authScreen.classList.add('hidden');
+  lockScreen.classList.add('hidden');
+
   renderPlayerDetails();
   renderAppGrid();
   renderNotificationCenter();
@@ -2917,10 +4754,14 @@ function initializePhone() {
 
   document.getElementById('dockMessages').addEventListener('click', () => {
     closeSettingsMenu();
-    setAuthMessage('Messages placeholder', 'success');
+    openApp('messages', 'normal');
   });
 
   document.getElementById('dockSettings').addEventListener('click', () => {
+    if (settingsMenu && !settingsMenu.classList.contains('hidden')) {
+      closeSettingsMenu();
+      return;
+    }
     openSettingsMenu();
   });
 
