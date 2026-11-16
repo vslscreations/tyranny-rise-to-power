@@ -3422,7 +3422,9 @@ function renderPlayerDetails() {
 }
 
 function renderAppGrid() {
-  const keys = Object.keys(appCatalog).filter((appId) => appId !== 'moderator' || moderatorAppState.visible);
+  const keys = Object.keys(appCatalog)
+    .filter((appId) => appId !== 'messages')
+    .filter((appId) => appId !== 'moderator' || moderatorAppState.visible);
   appGrid.innerHTML = keys
     .map((appId) => {
       const app = appCatalog[appId];
@@ -4277,8 +4279,15 @@ function renderAppContent(appId, mode = 'normal') {
       moneytreeState.selectedDiscussionFeedError = null;
 
       try {
-        const url = `https://zyfjygkpbomrowfmxdvd.supabase.co/functions/v1/get-moneytree-feed?discussion_id=${encodeURIComponent(discussionId)}`;
-        const response = await fetch(url, {
+        const supabaseUrl = supabase?.supabaseUrl || window.TYRANNY_SUPABASE_CONFIG?.url;
+        if (!supabaseUrl) {
+          throw new Error('Supabase project configuration is unavailable.');
+        }
+
+        const url = new URL(`${supabaseUrl}/functions/v1/get-moneytree-feed`);
+        url.searchParams.set('discussion_id', discussionId);
+
+        const response = await fetch(url.toString(), {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${session.access_token}`,

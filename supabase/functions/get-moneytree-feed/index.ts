@@ -4,6 +4,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 const allowedOrigins = new Set([
   'http://127.0.0.1:5500',
   'http://localhost:4173',
+  'http://192.168.0.191:4173',
   'https://vslscreations.github.io',
 ]);
 
