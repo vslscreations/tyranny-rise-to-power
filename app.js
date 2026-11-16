@@ -44,6 +44,12 @@ const appCatalog = {
     color: '#8ae5a5',
     unread: 2,
   },
+  moderator: {
+    name: 'Moderator',
+    icon: '⚖',
+    color: '#ffb86b',
+    unread: 0,
+  },
   mylife: {
     name: 'MyLife',
     icon: './images/icons/mylife.PNG',
@@ -198,6 +204,16 @@ const appState = {};
 let activeAppId = null;
 let lockVisible = true;
 
+const moderatorAppState = {
+  visible: false,
+  queue: [],
+  loading: false,
+  error: null,
+  message: null,
+  processingIds: [],
+  requestToken: 0,
+};
+
 const appLayer = document.getElementById('app-layer');
 const homeScreen = document.getElementById('home-screen');
 const lockScreen = document.getElementById('lock-screen');
@@ -252,6 +268,16 @@ function deriveAvatarText(name) {
   return initials || 'AV';
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[character]));
+}
+
 function getDisplayProfession(value, fallback = 'Profile unavailable') {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) {
@@ -284,16 +310,6 @@ function formatCurrency(value) {
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(number);
-}
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[character]));
 }
 
 function getAvatarForCitizenName(name) {
@@ -3406,7 +3422,7 @@ function renderPlayerDetails() {
 }
 
 function renderAppGrid() {
-  const keys = Object.keys(appCatalog);
+  const keys = Object.keys(appCatalog).filter((appId) => appId !== 'moderator' || moderatorAppState.visible);
   appGrid.innerHTML = keys
     .map((appId) => {
       const app = appCatalog[appId];
@@ -3442,6 +3458,33 @@ function renderAppGrid() {
       openApp(appId, 'normal');
     });
   });
+}
+
+async function refreshModeratorAppVisibility() {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+
+  if (!supabase || !session?.user) {
+    moderatorAppState.visible = false;
+    renderAppGrid();
+    return false;
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke('get-moneytree-moderation-queue', {
+      method: 'GET',
+    });
+
+    const canAccessQueue = !error && Boolean(data || (Array.isArray(data) && data.length >= 0));
+    moderatorAppState.visible = canAccessQueue;
+    renderAppGrid();
+    return canAccessQueue;
+  } catch (error) {
+    console.warn('Moderator app visibility check failed:', error);
+    moderatorAppState.visible = false;
+    renderAppGrid();
+    return false;
+  }
 }
 
 function renderNotificationCenter() {
@@ -3901,28 +3944,1277 @@ function renderAppContent(appId, mode = 'normal') {
   }
 
   if (appId === 'moneytree') {
-    body.innerHTML = `
-      <div class="money-card">
-        <div class="chat-thread" aria-label="MoneyTree conversation">
-          <div class="chat-bubble">You’ve been flagged for a new regional donor campaign.</div>
-          <div class="chat-bubble user">I can route a $3,200 transfer to the district office.</div>
-          <div class="chat-bubble">Your allies approved the operation. Secure the route before sunset.</div>
-          <div class="chat-bubble user">Understood. I’ll direct resources to the new harbor contracts.</div>
+    const formatMoney = (value) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return '$0.00';
+      }
+
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(numeric);
+    };
+
+    const moneytreeState = {
+      discussions: [],
+      selectedDiscussionId: null,
+      selectedDiscussionFeed: [],
+      selectedDiscussionFeedLoading: false,
+      selectedDiscussionFeedError: null,
+      discussionError: null,
+      submitError: null,
+      submitSuccess: null,
+      submitDraft: '',
+      challengeDraft: '',
+      submitRequestId: null,
+      submitting: false,
+      challengeParentContributionId: null,
+      expandedChallengeIds: new Set(),
+      isModerator: false,
+      moderationQueue: [],
+      moderationLoading: false,
+      moderationMessage: null,
+      moderationError: null,
+      moderationProcessingIds: [],
+    };
+
+    const getDiscussionContributionType = (discussion) => {
+      const type = typeof discussion?.discussion_type === 'string' ? discussion.discussion_type : '';
+      switch (type) {
+        case 'question':
+          return 'question_answer';
+        case 'career':
+          return 'career_answer';
+        case 'open_chat':
+          return 'open_discussion';
+        default:
+          return 'question_answer';
+      }
+    };
+
+    const createSubmissionRequestId = () => {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+
+      return `moneytree-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    };
+
+    const loadActiveDiscussions = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moneytreeState.discussions = [];
+        moneytreeState.selectedDiscussionId = null;
+        moneytreeState.discussionError = 'Your session has expired. Please sign in again.';
+        return [];
+      }
+
+      try {
+        const { data, error } = await supabase.functions.invoke('get-moneytree-discussions', {
+          method: 'GET',
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const discussions = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.discussions)
+            ? data.discussions
+            : [];
+
+        moneytreeState.discussions = discussions
+          .map((discussion) => ({
+            id: discussion?.id ?? null,
+            discussion_type: discussion?.discussion_type ?? 'question',
+            title: discussion?.title ?? 'Untitled discussion',
+            prompt: discussion?.prompt ?? '',
+            profession_gate: discussion?.profession_gate ?? null,
+            created_at: discussion?.created_at ?? null,
+          }))
+          .filter((discussion) => discussion.id);
+
+        if (!moneytreeState.discussions.length) {
+          moneytreeState.selectedDiscussionId = null;
+          moneytreeState.discussionError = null;
+          return [];
+        }
+
+        if (moneytreeState.selectedDiscussionId) {
+          const validSelection = moneytreeState.discussions.some((discussion) => discussion.id === moneytreeState.selectedDiscussionId);
+          if (!validSelection) {
+            moneytreeState.selectedDiscussionId = null;
+          }
+        }
+
+        moneytreeState.discussionError = null;
+        return moneytreeState.discussions;
+      } catch (error) {
+        console.error('MoneyTree discussion load failed:', error);
+        moneytreeState.discussions = [];
+        moneytreeState.selectedDiscussionId = null;
+        moneytreeState.discussionError = 'We couldn\'t load the active discussions right now.';
+        return [];
+      }
+    };
+
+    const renderDiscussionThread = (contributions) => {
+      const items = Array.isArray(contributions) ? contributions : [];
+      if (!items.length) {
+        return '<div class="moneytree-empty-state"><strong>No previous answers yet.</strong><p>Be the first to respond in this discussion.</p></div>';
+      }
+
+      const byId = new Map(items.map((item) => [String(item.id), item]));
+      const childrenByParent = new Map();
+
+      items.forEach((item) => {
+        const parentId = item.parent_contribution_id ? String(item.parent_contribution_id) : null;
+        if (parentId && byId.has(parentId)) {
+          const list = childrenByParent.get(parentId) || [];
+          list.push(item);
+          childrenByParent.set(parentId, list);
+        }
+      });
+
+      const sortedItems = [...items].sort((a, b) => {
+        const left = new Date(a.created_at || 0).getTime();
+        const right = new Date(b.created_at || 0).getTime();
+        return left - right;
+      });
+
+      const roots = sortedItems.filter((item) => !item.parent_contribution_id || !byId.has(String(item.parent_contribution_id)));
+
+      const renderChallengeEntry = (item, depth = 0) => {
+        const childItems = (childrenByParent.get(String(item.id)) || []).sort((a, b) => {
+          const left = new Date(a.created_at || 0).getTime();
+          const right = new Date(b.created_at || 0).getTime();
+          return left - right;
+        });
+        const content = typeof item.content === 'string' ? item.content : '';
+        const authorLabel = item.citizen_id ? `Citizen ${String(item.citizen_id).slice(0, 8)}` : 'Citizen';
+        const moderationState = typeof item.moderation_state === 'string' ? item.moderation_state : 'pending';
+        const statusLabel = moderationState === 'approved'
+          ? 'Approved'
+          : moderationState === 'rejected'
+            ? 'Rejected'
+            : 'Pending review';
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const isOwnContribution = Boolean(currentCitizenId && item.citizen_id && String(item.citizen_id) === currentCitizenId);
+        const isExpanded = moneytreeState.expandedChallengeIds.has(String(item.id));
+        const isChallengeTarget = String(moneytreeState.challengeParentContributionId || '') === String(item.id || '');
+
+        const nestedChallengeMarkup = childItems.length > 0
+          ? `
+            <div class="moneytree-challenge-toggle-row">
+              <button
+                type="button"
+                class="moneytree-challenge-toggle"
+                data-action="moneytree-toggle-challenge-section"
+                data-contribution-id="${escapeHtml(item.id || '')}"
+                aria-expanded="${isExpanded ? 'true' : 'false'}"
+              >
+                ${isExpanded ? 'Hide' : 'View'} ${childItems.length} ${childItems.length === 1 ? 'Challenge' : 'Challenges'}
+              </button>
+            </div>
+            ${isExpanded ? `
+              <div class="moneytree-challenge-section">
+                ${childItems.map((child) => renderChallengeEntry(child, depth + 1)).join('')}
+              </div>
+            ` : ''}
+          `
+          : '';
+
+        const challengeFormMarkup = isChallengeTarget ? `
+          <div class="moneytree-discussion-form moneytree-inline-challenge-form">
+            <label class="moneytree-discussion-label" for="moneytree-challenge-input">Challenge response</label>
+            <textarea id="moneytree-challenge-input" rows="5" placeholder="Write your challenge here...">${escapeHtml(moneytreeState.challengeDraft)}</textarea>
+            <button type="button" class="moneytree-submit-button" data-action="moneytree-submit-challenge" ${moneytreeState.submitting ? 'disabled' : ''}>
+              ${moneytreeState.submitting ? 'Submitting…' : 'Submit challenge'}
+            </button>
+          </div>
+        ` : '';
+
+        return `
+          <div class="moneytree-challenge-entry" style="margin-left:${depth * 12}px;" data-contribution-id="${escapeHtml(item.id || '')}">
+            <div class="moneytree-thread-header">
+              <div class="moneytree-thread-meta">
+                <span class="moneytree-thread-author">${escapeHtml(authorLabel)}</span>
+                <span class="moneytree-thread-date">${escapeHtml(item.created_at ? new Date(item.created_at).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                }) : 'No date')}</span>
+              </div>
+              <span class="moneytree-thread-status ${escapeHtml(moderationState || 'pending')}">${escapeHtml(statusLabel)}</span>
+            </div>
+            <div class="moneytree-thread-content">${escapeHtml(content)}</div>
+            ${nestedChallengeMarkup}
+            <div class="moneytree-thread-actions">
+              <button
+                type="button"
+                class="moneytree-thread-challenge-button"
+                data-action="moneytree-challenge-contribution"
+                data-contribution-id="${escapeHtml(item.id || '')}"
+                ${isOwnContribution ? 'disabled' : ''}
+              >
+                ${isOwnContribution ? 'Own contribution' : 'Challenge'}
+              </button>
+            </div>
+            ${challengeFormMarkup}
+          </div>
+        `;
+      };
+
+      const renderContributionCard = (item) => {
+        const childItems = (childrenByParent.get(String(item.id)) || []).sort((a, b) => {
+          const left = new Date(a.created_at || 0).getTime();
+          const right = new Date(b.created_at || 0).getTime();
+          return left - right;
+        });
+        const content = typeof item.content === 'string' ? item.content : '';
+        const authorLabel = item.citizen_id ? `Citizen ${String(item.citizen_id).slice(0, 8)}` : 'Citizen';
+        const moderationState = typeof item.moderation_state === 'string' ? item.moderation_state : 'pending';
+        const statusLabel = moderationState === 'approved'
+          ? 'Approved'
+          : moderationState === 'rejected'
+            ? 'Rejected'
+            : 'Pending review';
+        const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+        const isOwnContribution = Boolean(currentCitizenId && item.citizen_id && String(item.citizen_id) === currentCitizenId);
+        const isExpanded = moneytreeState.expandedChallengeIds.has(String(item.id));
+        const isChallengeTarget = String(moneytreeState.challengeParentContributionId || '') === String(item.id || '');
+
+        const nestedChallengeMarkup = childItems.length > 0
+          ? `
+            <div class="moneytree-challenge-toggle-row">
+              <button
+                type="button"
+                class="moneytree-challenge-toggle"
+                data-action="moneytree-toggle-challenge-section"
+                data-contribution-id="${escapeHtml(item.id || '')}"
+                aria-expanded="${isExpanded ? 'true' : 'false'}"
+              >
+                ${isExpanded ? 'Hide' : 'View'} ${childItems.length} ${childItems.length === 1 ? 'Challenge' : 'Challenges'}
+              </button>
+            </div>
+            ${isExpanded ? `
+              <div class="moneytree-challenge-section">
+                ${childItems.map((child) => renderChallengeEntry(child)).join('')}
+              </div>
+            ` : ''}
+          `
+          : '';
+
+        const challengeFormMarkup = isChallengeTarget ? `
+          <div class="moneytree-discussion-form moneytree-inline-challenge-form">
+            <label class="moneytree-discussion-label" for="moneytree-challenge-input">Challenge response</label>
+            <textarea id="moneytree-challenge-input" rows="5" placeholder="Write your challenge here...">${escapeHtml(moneytreeState.challengeDraft)}</textarea>
+            <button type="button" class="moneytree-submit-button" data-action="moneytree-submit-challenge" ${moneytreeState.submitting ? 'disabled' : ''}>
+              ${moneytreeState.submitting ? 'Submitting…' : 'Submit challenge'}
+            </button>
+          </div>
+        ` : '';
+
+        return `
+          <article class="moneytree-thread-card moneytree-contribution-card" data-contribution-id="${escapeHtml(item.id || '')}">
+            <div class="moneytree-thread-header">
+              <div class="moneytree-thread-meta">
+                <span class="moneytree-thread-author">${escapeHtml(authorLabel)}</span>
+                <span class="moneytree-thread-date">${escapeHtml(item.created_at ? new Date(item.created_at).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                }) : 'No date')}</span>
+              </div>
+              <span class="moneytree-thread-status ${escapeHtml(moderationState || 'pending')}">${escapeHtml(statusLabel)}</span>
+            </div>
+            <div class="moneytree-thread-content">${escapeHtml(content)}</div>
+            ${nestedChallengeMarkup}
+            <div class="moneytree-thread-actions">
+              <button
+                type="button"
+                class="moneytree-thread-challenge-button"
+                data-action="moneytree-challenge-contribution"
+                data-contribution-id="${escapeHtml(item.id || '')}"
+                ${isOwnContribution ? 'disabled' : ''}
+              >
+                ${isOwnContribution ? 'Own contribution' : 'Challenge'}
+              </button>
+            </div>
+            ${challengeFormMarkup}
+          </article>
+        `;
+      };
+
+      return roots.map((item) => renderContributionCard(item)).join('');
+    };
+
+    const loadSelectedDiscussionFeed = async (discussionId) => {
+      if (!discussionId) {
+        moneytreeState.selectedDiscussionFeed = [];
+        moneytreeState.selectedDiscussionFeedError = null;
+        moneytreeState.selectedDiscussionFeedLoading = false;
+        return;
+      }
+
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.access_token) {
+        moneytreeState.selectedDiscussionFeed = [];
+        moneytreeState.selectedDiscussionFeedError = 'Your session has expired. Please sign in again.';
+        moneytreeState.selectedDiscussionFeedLoading = false;
+        return;
+      }
+
+      moneytreeState.selectedDiscussionFeedLoading = true;
+      moneytreeState.selectedDiscussionFeedError = null;
+
+      try {
+        const url = `https://zyfjygkpbomrowfmxdvd.supabase.co/functions/v1/get-moneytree-feed?discussion_id=${encodeURIComponent(discussionId)}`;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          credentials: 'include',
+          mode: 'cors',
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to load discussion answers.');
+        }
+
+        moneytreeState.selectedDiscussionFeed = Array.isArray(payload?.contributions) ? payload.contributions : [];
+        moneytreeState.selectedDiscussionFeedError = null;
+      } catch (error) {
+        console.error('MoneyTree discussion feed load failed:', error);
+        moneytreeState.selectedDiscussionFeed = [];
+        moneytreeState.selectedDiscussionFeedError = error?.message || 'Unable to load discussion answers.';
+      } finally {
+        moneytreeState.selectedDiscussionFeedLoading = false;
+      }
+    };
+
+    const loadModeratorQueue = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moneytreeState.isModerator = false;
+        moneytreeState.moderationQueue = [];
+        moneytreeState.moderationLoading = false;
+        return [];
+      }
+
+      moneytreeState.moderationLoading = true;
+      moneytreeState.moderationError = null;
+      moneytreeState.moderationMessage = null;
+
+      try {
+        const { data, error } = await supabase.functions.invoke('get-moneytree-moderation-queue', {
+          method: 'GET',
+        });
+
+        if (error) {
+          const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+          const isAccessError = Number(error?.status) === 403 || message.includes('moderator') || message.includes('access');
+          if (isAccessError) {
+            moneytreeState.isModerator = false;
+            moneytreeState.moderationQueue = [];
+            return [];
+          }
+
+          throw error;
+        }
+
+        const queue = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.pending_contributions)
+            ? data.pending_contributions
+            : [];
+
+        moneytreeState.isModerator = true;
+        moneytreeState.moderationQueue = queue.map((item) => ({
+          id: item?.id ?? null,
+          discussion_id: item?.discussion_id ?? null,
+          discussion_title: item?.discussion_title ?? 'Unknown discussion',
+          discussion_type: item?.discussion_type ?? 'question',
+          contribution_type: item?.contribution_type ?? 'question_answer',
+          contributor_citizen_id: item?.contributor_citizen_id ?? null,
+          contributor_public_name: item?.contributor_public_name ?? 'Citizen',
+          content: typeof item?.content === 'string' ? item.content : '',
+          created_at: item?.created_at ?? null,
+        })).filter((item) => item.id);
+
+        return moneytreeState.moderationQueue;
+      } catch (error) {
+        console.error('MoneyTree moderator queue load failed:', error);
+        moneytreeState.isModerator = false;
+        moneytreeState.moderationQueue = [];
+        moneytreeState.moderationError = error?.message || 'Unable to load the moderation queue right now.';
+        return [];
+      } finally {
+        moneytreeState.moderationLoading = false;
+      }
+    };
+
+    const handleModeratorDecision = async (contributionId, decision, rejectionReason = null) => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moneytreeState.moderationError = 'Your session has expired. Please sign in again.';
+        moneytreeState.moderationMessage = null;
+        return;
+      }
+
+      if (!contributionId) {
+        moneytreeState.moderationError = 'A contribution is required to complete moderation.';
+        moneytreeState.moderationMessage = null;
+        return;
+      }
+
+      if (moneytreeState.moderationProcessingIds.includes(contributionId)) {
+        return;
+      }
+
+      const nextProcessingIds = [...new Set([...moneytreeState.moderationProcessingIds, contributionId])];
+      moneytreeState.moderationProcessingIds = nextProcessingIds;
+      moneytreeState.moderationError = null;
+      moneytreeState.moderationMessage = decision === 'approved' ? 'Approving contribution…' : 'Rejecting contribution…';
+
+      try {
+        const { data, error } = await supabase.rpc('moderate_moneytree_contribution', {
+          p_contribution_id: contributionId,
+          p_decision: decision,
+          p_reason: decision === 'rejected' ? rejectionReason : null,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const firstResult = Array.isArray(data) ? data[0] : data;
+        const moderationState = firstResult?.moderation_state || decision;
+        const successMessage = moderationState === 'approved'
+          ? 'Contribution approved successfully.'
+          : 'Contribution rejected successfully.';
+
+        moneytreeState.moderationMessage = successMessage;
+        moneytreeState.moderationError = null;
+        moneytreeState.moderationProcessingIds = moneytreeState.moderationProcessingIds.filter((id) => id !== contributionId);
+        await loadModeratorQueue();
+        await loadMoneytreeView();
+        return;
+      } catch (error) {
+        console.error('MoneyTree moderation action failed:', error);
+        moneytreeState.moderationError = error?.message || 'Unable to complete the moderation decision.';
+        moneytreeState.moderationMessage = null;
+      } finally {
+        moneytreeState.moderationProcessingIds = moneytreeState.moderationProcessingIds.filter((id) => id !== contributionId);
+      }
+    };
+
+    const renderDashboard = (state, discussions = moneytreeState.discussions) => {
+      const dashboard = state || {};
+      const availableBalance = Number(dashboard.available_balance ?? 0);
+      const pendingEarnings = Number(dashboard.pending_earnings ?? 0);
+      const activity = Array.isArray(dashboard.discussion_activity) ? dashboard.discussion_activity : [];
+      const activeDiscussions = Array.isArray(discussions) ? discussions : [];
+      const selectedDiscussion = moneytreeState.selectedDiscussionId
+        ? activeDiscussions.find((discussion) => discussion.id === moneytreeState.selectedDiscussionId) || null
+        : null;
+
+      if (selectedDiscussion) {
+        moneytreeState.selectedDiscussionId = selectedDiscussion.id;
+      }
+
+      const selectedDiscussionFeedMarkup = selectedDiscussion
+        ? (() => {
+            if (moneytreeState.selectedDiscussionFeedLoading) {
+              return '<div class="moneytree-empty-state"><strong>Loading previous answers…</strong><p>Retrieving discussion history.</p></div>';
+            }
+
+            if (moneytreeState.selectedDiscussionFeedError) {
+              return `<div class="moneytree-empty-state"><strong>Unable to load previous answers.</strong><p>${escapeHtml(moneytreeState.selectedDiscussionFeedError)}</p></div>`;
+            }
+
+            return `
+              <div class="moneytree-thread-wrapper">
+                <div class="moneytree-thread-label">Previous answers</div>
+                ${renderDiscussionThread(moneytreeState.selectedDiscussionFeed)}
+              </div>
+            `;
+          })()
+        : '';
+
+      const activityMarkup = activity.length > 0
+        ? activity.map((entry) => {
+            const titleLabel = typeof entry?.discussion_title === 'string' && entry.discussion_title.trim().length > 0
+              ? entry.discussion_title
+              : 'Unknown discussion';
+            const safeTitle = escapeHtml(titleLabel);
+            const moderationState = typeof entry?.moderation_state === 'string' ? entry.moderation_state : 'pending';
+            const stateLabel = moderationState === 'pending'
+              ? 'Awaiting Review'
+              : moderationState === 'approved'
+                ? 'Approved'
+                : moderationState === 'rejected'
+                  ? 'Rejected'
+                  : 'Unknown';
+            const rewardValue = Number(entry?.reward_amount ?? 10);
+            const rewardMarkup = moderationState === 'approved' && Number.isFinite(rewardValue)
+              ? `<span class="moneytree-reward-badge">${formatMoney(rewardValue)} credited to Available Balance.</span>`
+              : '';
+
+            return `
+              <article class="moneytree-activity-item">
+                <div class="moneytree-activity-header">
+                  <div>
+                    <div class="moneytree-activity-title">${safeTitle}</div>
+                    <div class="moneytree-activity-meta">${escapeHtml(entry?.contribution_type || 'Contribution')}</div>
+                  </div>
+                  ${rewardMarkup}
+                </div>
+                <div class="moneytree-activity-status-row">
+                  <span class="moneytree-status badge-${moderationState}">${stateLabel}</span>
+                  <span class="moneytree-date">${escapeHtml(entry?.contribution_date ? new Date(entry.contribution_date).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  }) : 'No date')}</span>
+                </div>
+              </article>
+            `;
+          }).join('')
+        : '<div class="moneytree-empty-state"><strong>No discussion activity yet.</strong><p>Your submitted contributions will appear here after they are recorded.</p></div>';
+
+      const moderationMarkup = '';
+
+      const discussionListMarkup = activeDiscussions.length > 0
+        ? activeDiscussions.map((discussion) => {
+            const isSelected = selectedDiscussion && discussion.id === selectedDiscussion.id;
+            const discussionType = typeof discussion.discussion_type === 'string' ? discussion.discussion_type : 'question';
+            const typeLabel = discussionType === 'question'
+              ? 'Question'
+              : discussionType === 'career'
+                ? 'Career'
+                : discussionType === 'open_chat'
+                  ? 'Open Chat'
+                  : 'Discussion';
+
+            return `
+              <button
+                type="button"
+                class="moneytree-discussion-item ${isSelected ? 'selected' : ''}"
+                data-action="moneytree-select-discussion"
+                data-discussion-id="${escapeHtml(discussion.id)}"
+              >
+                <span class="moneytree-discussion-title">${escapeHtml(discussion.title)}</span>
+                <span class="moneytree-discussion-type">${typeLabel}</span>
+              </button>
+            `;
+          }).join('')
+        : '<div class="moneytree-empty-state"><strong>No active discussions.</strong><p>New MoneyTree questions will appear here when they are published.</p></div>';
+
+      const selectedDiscussionModalMarkup = selectedDiscussion
+        ? `
+          <div class="moneytree-modal-backdrop" data-action="moneytree-close-modal">
+            <div class="moneytree-modal" role="dialog" aria-modal="true" aria-labelledby="moneytree-modal-title" data-action="moneytree-modal-card">
+              <button type="button" class="moneytree-modal-close" aria-label="Close discussion" data-action="moneytree-close-modal">×</button>
+              <div class="moneytree-discussion-detail">
+                <div class="moneytree-discussion-header-row">
+                  <div>
+                    <div class="moneytree-discussion-detail-label">Selected discussion</div>
+                    <h5 id="moneytree-modal-title">${escapeHtml(selectedDiscussion.title)}</h5>
+                  </div>
+                  <span class="moneytree-discussion-type-pill">${escapeHtml(
+                    selectedDiscussion.discussion_type === 'question'
+                      ? 'Question'
+                      : selectedDiscussion.discussion_type === 'career'
+                        ? 'Career'
+                        : selectedDiscussion.discussion_type === 'open_chat'
+                          ? 'Open Chat'
+                          : 'Discussion'
+                  )}</span>
+                </div>
+                <div class="moneytree-discussion-prompt">${escapeHtml(selectedDiscussion.prompt)}</div>
+                ${selectedDiscussion.profession_gate ? `<div class="moneytree-discussion-gate">Profession gate: ${escapeHtml(selectedDiscussion.profession_gate)}</div>` : ''}
+                <div class="moneytree-discussion-form">
+                  <label class="moneytree-discussion-label" for="moneytree-answer-input">Your answer</label>
+                  <textarea id="moneytree-answer-input" rows="7" placeholder="Write your answer here...">${escapeHtml(moneytreeState.submitDraft)}</textarea>
+                  ${moneytreeState.submitError ? `<div class="moneytree-discussion-message error">${escapeHtml(moneytreeState.submitError)}</div>` : ''}
+                  ${moneytreeState.submitSuccess ? `<div class="moneytree-discussion-message success">${escapeHtml(moneytreeState.submitSuccess)}</div>` : ''}
+                  <button type="button" class="moneytree-submit-button" data-action="moneytree-submit-answer" ${moneytreeState.submitting ? 'disabled' : ''}>
+                    ${moneytreeState.submitting ? 'Submitting…' : 'Submit answer'}
+                  </button>
+                </div>
+                ${selectedDiscussionFeedMarkup}
+              </div>
+            </div>
+          </div>
+        `
+        : '';
+
+      const modalScrollTop = document.querySelector('.moneytree-modal')?.scrollTop || 0;
+
+      body.innerHTML = `
+        <div class="moneytree-dashboard">
+          <div class="moneytree-summary-grid">
+            <div class="moneytree-stat-card moneytree-balance-card">
+              <span class="moneytree-stat-label">Available Balance</span>
+              <strong class="moneytree-stat-value">${formatMoney(availableBalance)}</strong>
+            </div>
+            <div class="moneytree-stat-card moneytree-pending-card">
+              <span class="moneytree-stat-label">Pending Earnings</span>
+              <strong class="moneytree-stat-value">${formatMoney(pendingEarnings)}</strong>
+              <small>Not spendable yet</small>
+            </div>
+          </div>
+
+          <div class="moneytree-panel moneytree-discussion-panel">
+            <div class="moneytree-panel-header">
+              <h4>Available Discussions</h4>
+              <button type="button" class="moneytree-refresh-button" data-action="moneytree-refresh">Refresh</button>
+            </div>
+            ${moneytreeState.discussionError ? `<div class="moneytree-empty-state"><strong>Unable to load discussions.</strong><p>${escapeHtml(moneytreeState.discussionError)}</p></div>` : ''}
+            <div class="moneytree-discussion-wrapper">
+              <div class="moneytree-discussion-list">${discussionListMarkup}</div>
+            </div>
+          </div>
+
+          <div class="moneytree-panel">
+            <div class="moneytree-panel-header">
+              <h4>Discussion Activity</h4>
+            </div>
+            <div class="moneytree-activity-list">
+              ${activityMarkup}
+            </div>
+          </div>
+
+          ${moderationMarkup}
+
+          ${selectedDiscussionModalMarkup}
         </div>
-        <div class="chat-input">
-          <input type="text" aria-label="Message MoneyTree" value="Send a discreet transfer" />
-          <button type="button">Send</button>
+      `;
+
+      const restoredModal = body.querySelector('.moneytree-modal');
+      if (restoredModal) {
+        restoredModal.scrollTop = modalScrollTop;
+      }
+
+      const refreshButton = body.querySelector('[data-action="moneytree-refresh"]');
+      if (refreshButton) {
+        refreshButton.addEventListener('click', async () => {
+          moneytreeState.submitError = null;
+          moneytreeState.submitSuccess = null;
+          moneytreeState.submitDraft = '';
+          moneytreeState.submitRequestId = null;
+          moneytreeState.submitting = false;
+          await loadMoneytreeView();
+        });
+      }
+
+      body.querySelectorAll('[data-action="moneytree-select-discussion"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const nextId = button.getAttribute('data-discussion-id');
+          if (!nextId) {
+            return;
+          }
+
+          moneytreeState.selectedDiscussionId = nextId;
+          moneytreeState.challengeParentContributionId = null;
+          moneytreeState.expandedChallengeIds = new Set();
+          moneytreeState.submitError = null;
+          moneytreeState.submitSuccess = null;
+          moneytreeState.submitDraft = '';
+          moneytreeState.challengeDraft = '';
+          moneytreeState.submitRequestId = null;
+          moneytreeState.submitting = false;
+          moneytreeState.selectedDiscussionFeed = [];
+          moneytreeState.selectedDiscussionFeedError = null;
+          moneytreeState.selectedDiscussionFeedLoading = true;
+          renderDashboard(dashboard, activeDiscussions);
+          await loadSelectedDiscussionFeed(nextId);
+          renderDashboard(dashboard, activeDiscussions);
+        });
+      });
+
+      body.querySelectorAll('[data-action="moneytree-toggle-challenge-section"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const contributionId = button.getAttribute('data-contribution-id');
+          if (!contributionId) {
+            return;
+          }
+
+          const key = String(contributionId);
+          if (moneytreeState.expandedChallengeIds.has(key)) {
+            moneytreeState.expandedChallengeIds.delete(key);
+          } else {
+            moneytreeState.expandedChallengeIds.add(key);
+          }
+
+          renderDashboard(dashboard, activeDiscussions);
+        });
+      });
+
+      body.querySelectorAll('[data-action="moneytree-challenge-contribution"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const contributionId = button.getAttribute('data-contribution-id');
+          if (!contributionId) {
+            return;
+          }
+
+          moneytreeState.challengeParentContributionId = contributionId;
+          moneytreeState.submitError = null;
+          moneytreeState.submitSuccess = null;
+          moneytreeState.submitDraft = '';
+          moneytreeState.challengeDraft = '';
+          moneytreeState.submitRequestId = null;
+          moneytreeState.submitting = false;
+          renderDashboard(dashboard, activeDiscussions);
+        });
+      });
+
+      const closeMoneytreeModal = () => {
+        moneytreeState.selectedDiscussionId = null;
+        moneytreeState.challengeParentContributionId = null;
+        moneytreeState.expandedChallengeIds = new Set();
+        moneytreeState.submitError = null;
+        moneytreeState.submitSuccess = null;
+        moneytreeState.submitDraft = '';
+        moneytreeState.challengeDraft = '';
+        moneytreeState.submitRequestId = null;
+        moneytreeState.submitting = false;
+        renderDashboard(dashboard, activeDiscussions);
+      };
+
+      const backdrop = body.querySelector('.moneytree-modal-backdrop');
+      if (backdrop) {
+        backdrop.addEventListener('click', (event) => {
+          if (event.target === backdrop) {
+            closeMoneytreeModal();
+          }
+        });
+      }
+
+      const modalCard = body.querySelector('.moneytree-modal');
+      if (modalCard) {
+        modalCard.addEventListener('click', (event) => {
+          event.stopPropagation();
+        });
+        modalCard.addEventListener('pointerdown', (event) => {
+          event.stopPropagation();
+        });
+      }
+
+      const closeButton = body.querySelector('.moneytree-modal-close');
+      if (closeButton) {
+        closeButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          closeMoneytreeModal();
+        });
+      }
+
+      const submitButtons = body.querySelectorAll('[data-action="moneytree-submit-answer"], [data-action="moneytree-submit-challenge"]');
+      submitButtons.forEach((submitButton) => {
+        submitButton.addEventListener('click', async () => {
+          if (!selectedDiscussion) {
+            return;
+          }
+
+          const isChallenge = submitButton.getAttribute('data-action') === 'moneytree-submit-challenge';
+          const answerInput = body.querySelector(isChallenge ? '#moneytree-challenge-input' : '#moneytree-answer-input');
+          const draftStateKey = isChallenge ? 'challengeDraft' : 'submitDraft';
+          const trimmedAnswer = (answerInput?.value ?? moneytreeState[draftStateKey] ?? '').trim();
+
+          if (!trimmedAnswer) {
+            moneytreeState.submitError = isChallenge
+              ? 'Please enter your challenge before submitting.'
+              : 'Please enter your answer before submitting.';
+            moneytreeState.submitSuccess = null;
+            moneytreeState[draftStateKey] = '';
+            renderDashboard(dashboard, activeDiscussions);
+            return;
+          }
+
+          if (trimmedAnswer.length > 4000) {
+            moneytreeState.submitError = 'Your answer is too long. Please keep it under 4,000 characters.';
+            moneytreeState.submitSuccess = null;
+            moneytreeState[draftStateKey] = trimmedAnswer;
+            renderDashboard(dashboard, activeDiscussions);
+            return;
+          }
+
+          const contributionType = isChallenge ? 'challenge' : getDiscussionContributionType(selectedDiscussion);
+          const parentContributionId = isChallenge ? moneytreeState.challengeParentContributionId : null;
+          const requestId = moneytreeState.submitRequestId ?? createSubmissionRequestId();
+          moneytreeState.submitRequestId = requestId;
+          moneytreeState[draftStateKey] = trimmedAnswer;
+          moneytreeState.submitError = null;
+          moneytreeState.submitting = true;
+          moneytreeState.submitSuccess = null;
+          renderDashboard(dashboard, activeDiscussions);
+
+          const supabase = getAuthClient();
+          const session = (await supabase?.auth.getSession())?.data?.session;
+
+          if (!supabase || !session?.user) {
+            moneytreeState.submitting = false;
+            moneytreeState.submitError = 'Your session has expired. Please sign in again.';
+            moneytreeState.submitSuccess = null;
+            renderDashboard(dashboard, activeDiscussions);
+            return;
+          }
+
+          let refreshAfterSuccessfulSubmission = false;
+
+          try {
+            const { data, error } = await supabase.rpc('submit_moneytree_contribution', {
+              p_discussion_id: selectedDiscussion.id,
+              p_contribution_type: contributionType,
+              p_parent_contribution_id: parentContributionId,
+              p_content: trimmedAnswer,
+              p_submission_request_id: requestId,
+            });
+
+            if (error) {
+              throw error;
+            }
+
+            const firstResult = Array.isArray(data) ? data[0] : data;
+            const resultValue = firstResult?.result ?? firstResult?.moderation_state ?? 'submitted';
+
+            if (resultValue === 'duplicate_request') {
+              moneytreeState.submitSuccess = 'This submission has already been recorded.';
+              moneytreeState.submitError = null;
+            } else {
+              moneytreeState.submitSuccess = isChallenge
+                ? 'Your challenge was submitted for review.'
+                : 'Your answer was submitted for review.';
+              moneytreeState.submitError = null;
+              moneytreeState[draftStateKey] = '';
+              moneytreeState.submitRequestId = null;
+              if (isChallenge) {
+                moneytreeState.challengeParentContributionId = null;
+                moneytreeState.challengeDraft = '';
+              } else {
+                moneytreeState.submitDraft = '';
+              }
+
+              try {
+                if (moneytreeState.selectedDiscussionId === selectedDiscussion.id) {
+                  await loadSelectedDiscussionFeed(selectedDiscussion.id);
+                }
+                await loadMoneytreeView();
+                refreshAfterSuccessfulSubmission = true;
+              } catch (refreshError) {
+                console.error('MoneyTree dashboard refresh after successful submission failed:', refreshError);
+              } finally {
+                moneytreeState.submitting = false;
+              }
+
+              return;
+            }
+          } catch (error) {
+            console.error('MoneyTree contribution submission failed:', error);
+            moneytreeState.submitError = error?.message || 'Unable to submit your answer right now. Please try again.';
+            moneytreeState.submitSuccess = null;
+          } finally {
+            if (!refreshAfterSuccessfulSubmission) {
+              moneytreeState.submitting = false;
+              renderDashboard(dashboard, activeDiscussions);
+            }
+          }
+        });
+      });
+    };
+
+    const renderLoadingState = () => {
+      body.innerHTML = `
+        <div class="moneytree-dashboard">
+          <div class="moneytree-summary-grid">
+            <div class="moneytree-stat-card moneytree-balance-card">
+              <span class="moneytree-stat-label">Available Balance</span>
+              <strong class="moneytree-stat-value">Loading...</strong>
+            </div>
+            <div class="moneytree-stat-card moneytree-pending-card">
+              <span class="moneytree-stat-label">Pending Earnings</span>
+              <strong class="moneytree-stat-value">Loading...</strong>
+              <small>Not spendable yet</small>
+            </div>
+          </div>
+
+          <div class="moneytree-panel moneytree-discussion-panel">
+            <div class="moneytree-panel-header">
+              <h4>Available Discussions</h4>
+              <button type="button" class="moneytree-refresh-button" data-action="moneytree-refresh">Refresh</button>
+            </div>
+            <div class="moneytree-empty-state"><strong>Loading discussions…</strong></div>
+          </div>
+
+          <div class="moneytree-panel">
+            <div class="moneytree-panel-header">
+              <h4>Discussion Activity</h4>
+            </div>
+            <div class="moneytree-empty-state"><strong>Loading your dashboard…</strong></div>
+          </div>
+        </div>
+      `;
+
+      const refreshButton = body.querySelector('[data-action="moneytree-refresh"]');
+      if (refreshButton) {
+        refreshButton.addEventListener('click', async () => {
+          moneytreeState.submitError = null;
+          moneytreeState.submitSuccess = null;
+          moneytreeState.submitDraft = '';
+          moneytreeState.submitRequestId = null;
+          moneytreeState.submitting = false;
+          await loadMoneytreeView();
+        });
+      }
+    };
+
+    const renderErrorState = (message) => {
+      body.innerHTML = `
+        <div class="moneytree-dashboard">
+          <div class="moneytree-summary-grid">
+            <div class="moneytree-stat-card moneytree-balance-card">
+              <span class="moneytree-stat-label">Available Balance</span>
+              <strong class="moneytree-stat-value">Unavailable</strong>
+            </div>
+            <div class="moneytree-stat-card moneytree-pending-card">
+              <span class="moneytree-stat-label">Pending Earnings</span>
+              <strong class="moneytree-stat-value">Unavailable</strong>
+              <small>Not spendable yet</small>
+            </div>
+          </div>
+
+          <div class="moneytree-panel moneytree-discussion-panel">
+            <div class="moneytree-panel-header">
+              <h4>Available Discussions</h4>
+              <button type="button" class="moneytree-refresh-button" data-action="moneytree-refresh">Refresh</button>
+            </div>
+            <div class="moneytree-empty-state">
+              <strong>Unable to load discussions.</strong>
+              <p>${escapeHtml(message)}</p>
+            </div>
+          </div>
+
+          <div class="moneytree-panel">
+            <div class="moneytree-panel-header">
+              <h4>Discussion Activity</h4>
+            </div>
+            <div class="moneytree-empty-state">
+              <strong>Unable to load dashboard.</strong>
+              <p>${escapeHtml(message)}</p>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const refreshButton = body.querySelector('[data-action="moneytree-refresh"]');
+      if (refreshButton) {
+        refreshButton.addEventListener('click', async () => {
+          moneytreeState.submitError = null;
+          moneytreeState.submitSuccess = null;
+          moneytreeState.submitDraft = '';
+          moneytreeState.submitRequestId = null;
+          moneytreeState.submitting = false;
+          await loadMoneytreeView();
+        });
+      }
+    };
+
+    const loadMoneytreeView = async () => {
+      renderLoadingState();
+
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        renderErrorState('Your session has expired. Please sign in again.');
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase.functions.invoke('get-moneytree-dashboard', {
+          method: 'GET',
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const discussions = await loadActiveDiscussions();
+        await loadModeratorQueue();
+        renderDashboard(data || {}, discussions);
+      } catch (error) {
+        console.error('MoneyTree dashboard load failed:', error);
+        renderErrorState('We couldn\'t load your MoneyTree information. Please try again.');
+      }
+    };
+
+    loadMoneytreeView();
+  }
+
+  if (appId === 'moderator') {
+    body.innerHTML = `
+      <div class="moneytree-dashboard">
+        <div class="moneytree-panel moneytree-discussion-panel">
+          <div class="moneytree-panel-header">
+            <h4>Moderator Dashboard</h4>
+            <button type="button" class="moneytree-refresh-button" data-action="moderator-refresh-queue">Refresh</button>
+          </div>
+          <div id="moderatorQueueState" class="moneytree-empty-state"><strong>Loading moderation queue…</strong><p>Verifying moderator authorization and fetching pending submissions.</p></div>
         </div>
       </div>
     `;
 
-    const thread = body.querySelector('.chat-thread');
-    if (thread) {
-      thread.scrollTop = appState[appId].scrollTop || thread.scrollHeight;
-      thread.addEventListener('scroll', () => {
-        appState[appId].scrollTop = thread.scrollTop;
-      }, { passive: true });
+    const queueState = document.getElementById('moderatorQueueState');
+
+    const renderModeratorQueue = (queue) => {
+      if (!queue.length) {
+        queueState.className = 'moneytree-empty-state';
+        queueState.innerHTML = '<strong>No pending submissions.</strong><p>Approved and rejected items clear from this queue automatically.</p>';
+        return;
+      }
+
+      queueState.className = 'moneytree-activity-list';
+      queueState.innerHTML = queue.map((item) => {
+        const createdAt = item.created_at ? new Date(item.created_at).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }) : 'No date';
+        const discussionContext = item.discussion_prompt ? escapeHtml(item.discussion_prompt) : 'No original discussion context available.';
+        const parentContext = item.parent_contribution_context ? escapeHtml(item.parent_contribution_context) : 'No parent contribution context — this is a root contribution.';
+
+        return `
+          <article class="moneytree-review-item">
+            <div class="moneytree-review-header">
+              <div>
+                <div class="moneytree-review-title">${escapeHtml(item.discussion_title || 'Unknown discussion')}</div>
+                <div class="moneytree-review-meta">${escapeHtml(item.contributor_public_name || 'Citizen')} • ${escapeHtml(createdAt)}</div>
+              </div>
+              <span class="moneytree-review-pill">${escapeHtml(item.contribution_type || 'Contribution')}</span>
+            </div>
+
+            <div class="moneytree-review-content"><strong>Contribution</strong><br>${escapeHtml(item.content || 'No content provided.')}</div>
+
+            <div class="moneytree-review-content">
+              <strong>Original discussion context</strong><br>${discussionContext}
+            </div>
+
+            <div class="moneytree-review-content">
+              <strong>Parent contribution context</strong><br>${parentContext}
+            </div>
+
+            <label class="moneytree-review-label" for="moderator-reject-${escapeHtml(item.id || '')}">Rejection reason</label>
+            <textarea id="moderator-reject-${escapeHtml(item.id || '')}" class="moneytree-review-reason" data-action="moderator-reject-reason" data-contribution-id="${escapeHtml(item.id || '')}" rows="2" placeholder="Required when rejecting" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}></textarea>
+            <div class="moneytree-review-actions">
+              <button type="button" class="moneytree-review-button approve" data-action="moderator-approve-contribution" data-contribution-id="${escapeHtml(item.id || '')}" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}>${moderatorAppState.processingIds.includes(item.id) ? 'Processing…' : 'Approve'}</button>
+              <button type="button" class="moneytree-review-button reject" data-action="moderator-reject-contribution" data-contribution-id="${escapeHtml(item.id || '')}" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}>${moderatorAppState.processingIds.includes(item.id) ? 'Processing…' : 'Reject'}</button>
+            </div>
+          </article>
+        `;
+      }).join('');
+    };
+
+    const applyModeratorQueueView = (queue) => {
+      if (moderatorAppState.error) {
+        queueState.className = 'moneytree-empty-state';
+        queueState.innerHTML = `<strong>Unable to load the moderation queue.</strong><p>${escapeHtml(moderatorAppState.error)}</p>`;
+        return;
+      }
+
+      renderModeratorQueue(queue);
+    };
+
+    const loadModeratorQueueForApp = async () => {
+      if (moderatorAppState.loading) {
+        return moderatorAppState.queue;
+      }
+
+      const requestToken = ++moderatorAppState.requestToken;
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moderatorAppState.loading = false;
+        moderatorAppState.error = 'Your session has expired. Please sign in again.';
+        applyModeratorQueueView([]);
+        return [];
+      }
+
+      moderatorAppState.loading = true;
+      moderatorAppState.error = null;
+      moderatorAppState.message = null;
+
+      try {
+        const { data, error } = await supabase.functions.invoke('get-moneytree-moderation-queue', {
+          method: 'GET',
+        });
+
+        if (requestToken !== moderatorAppState.requestToken) {
+          return moderatorAppState.queue;
+        }
+
+        if (error) {
+          const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+          if (Number(error?.status) === 403 || message.includes('moderator') || message.includes('access')) {
+            moderatorAppState.visible = false;
+            moderatorAppState.queue = [];
+            renderAppGrid();
+            queueState.className = 'moneytree-empty-state';
+            queueState.innerHTML = '<strong>Access denied.</strong><p>Your account does not have moderator authorization.</p>';
+            return [];
+          }
+          throw error;
+        }
+
+        const rawQueue = Array.isArray(data) ? data : Array.isArray(data?.pending_contributions) ? data.pending_contributions : [];
+        const queue = rawQueue.map((item) => ({
+          ...item,
+          discussion_title: item?.discussion_title ?? 'Unknown discussion',
+          discussion_prompt: item?.discussion_prompt ?? '',
+          parent_contribution_context: item?.parent_contribution_context ?? 'No parent contribution context — this is a root contribution.',
+          contributor_public_name: item?.contributor_public_name ?? 'Citizen',
+          content: typeof item?.content === 'string' ? item.content : '',
+        }));
+
+        moderatorAppState.visible = true;
+        moderatorAppState.queue = queue;
+        moderatorAppState.error = null;
+        renderAppGrid();
+        applyModeratorQueueView(queue);
+        return queue;
+      } catch (error) {
+        if (requestToken !== moderatorAppState.requestToken) {
+          return moderatorAppState.queue;
+        }
+
+        console.error('Moderator dashboard queue load failed:', error);
+        moderatorAppState.visible = false;
+        moderatorAppState.queue = [];
+        moderatorAppState.error = error?.message || 'Unable to load the moderation queue right now.';
+        renderAppGrid();
+        applyModeratorQueueView([]);
+        return [];
+      } finally {
+        if (requestToken === moderatorAppState.requestToken) {
+          moderatorAppState.loading = false;
+        }
+      }
+    };
+
+    const handleModeratorDecisionForApp = async (contributionId, decision, rejectionReason = null) => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moderatorAppState.error = 'Your session has expired. Please sign in again.';
+        applyModeratorQueueView(moderatorAppState.queue);
+        return;
+      }
+
+      if (!contributionId) {
+        moderatorAppState.error = 'A contribution is required to complete moderation.';
+        applyModeratorQueueView(moderatorAppState.queue);
+        return;
+      }
+
+      if (moderatorAppState.processingIds.includes(contributionId)) {
+        return;
+      }
+
+      moderatorAppState.processingIds = [...new Set([...moderatorAppState.processingIds, contributionId])];
+      moderatorAppState.error = null;
+      moderatorAppState.message = decision === 'approved' ? 'Approving contribution…' : 'Rejecting contribution…';
+      applyModeratorQueueView(moderatorAppState.queue);
+
+      try {
+        const { data, error } = await supabase.rpc('moderate_moneytree_contribution', {
+          p_contribution_id: contributionId,
+          p_decision: decision,
+          p_reason: decision === 'rejected' ? rejectionReason : null,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        const moderationState = result?.moderation_state || decision;
+        moderatorAppState.message = moderationState === 'approved'
+          ? 'Contribution approved successfully.'
+          : 'Contribution rejected successfully.';
+        moderatorAppState.error = null;
+        moderatorAppState.processingIds = moderatorAppState.processingIds.filter((id) => id !== contributionId);
+        await loadModeratorQueueForApp();
+      } catch (error) {
+        console.error('Moderator dashboard action failed:', error);
+        moderatorAppState.error = error?.message || 'Unable to complete the moderation decision.';
+        moderatorAppState.message = null;
+        moderatorAppState.processingIds = moderatorAppState.processingIds.filter((id) => id !== contributionId);
+        applyModeratorQueueView(moderatorAppState.queue);
+      }
+    };
+
+    const refreshButton = body.querySelector('[data-action="moderator-refresh-queue"]');
+    if (refreshButton && !refreshButton.dataset.moderatorRefreshBound) {
+      refreshButton.dataset.moderatorRefreshBound = 'true';
+      refreshButton.addEventListener('click', async () => {
+        moderatorAppState.error = null;
+        moderatorAppState.message = null;
+        await loadModeratorQueueForApp();
+      });
     }
+
+    if (!body.dataset.moderatorActionDelegationBound) {
+      body.dataset.moderatorActionDelegationBound = 'true';
+      body.addEventListener('click', async (event) => {
+        const approveButton = event.target.closest('[data-action="moderator-approve-contribution"]');
+        if (approveButton) {
+          const contributionId = approveButton.getAttribute('data-contribution-id');
+          if (!contributionId) {
+            return;
+          }
+          await handleModeratorDecisionForApp(contributionId, 'approved', null);
+          return;
+        }
+
+        const rejectButton = event.target.closest('[data-action="moderator-reject-contribution"]');
+        if (rejectButton) {
+          const contributionId = rejectButton.getAttribute('data-contribution-id');
+          if (!contributionId) {
+            return;
+          }
+          const reasonField = body.querySelector(`#moderator-reject-${CSS.escape(contributionId)}`);
+          const rejectionReason = (reasonField?.value ?? '').trim();
+          if (!rejectionReason) {
+            moderatorAppState.error = 'A rejection reason is required before rejecting a contribution.';
+            moderatorAppState.message = null;
+            applyModeratorQueueView(moderatorAppState.queue);
+            return;
+          }
+          await handleModeratorDecisionForApp(contributionId, 'rejected', rejectionReason);
+        }
+      });
+    }
+
+    loadModeratorQueueForApp();
+    return;
   }
 
   if (appId === 'store') {
@@ -3997,8 +5289,9 @@ function renderAppContent(appId, mode = 'normal') {
 
 function openApp(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
+  const shouldRefreshModeratorApp = appId === 'moderator' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
 
-  if (!appWindow.dataset.initialized || appWindow.dataset.mode !== mode) {
+  if (shouldRefreshModeratorApp) {
     renderAppContent(appId, mode);
     appWindow.dataset.initialized = 'true';
     appWindow.dataset.mode = mode;
@@ -4273,6 +5566,7 @@ async function handleAuthSession() {
     }
 
     await loadCitizenProfile();
+    await refreshModeratorAppVisibility();
 
     hideCitizenSetup();
     authScreen.classList.add('hidden');
@@ -4717,6 +6011,7 @@ function initializePhone() {
     }
 
     await loadCitizenProfile();
+    await refreshModeratorAppVisibility();
 
     homeScreen.classList.remove('hidden');
     lockScreen.classList.add('hidden');

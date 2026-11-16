@@ -2449,3 +2449,761 @@ button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+#app-moneytree {
+  background: linear-gradient(180deg, #b7f45b 0%, #9ad931 100%);
+}
+
+#app-moneytree .app-body {
+  background: transparent;
+}
+
+.moneytree-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: transparent;
+  border-radius: 22px;
+  padding: 18px;
+  box-sizing: border-box;
+  min-height: 100%;
+}
+
+.moneytree-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.moneytree-stat-card,
+.moneytree-panel {
+  border-radius: 20px;
+  background: rgba(21, 27, 31, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 18px;
+}
+
+.moneytree-balance-card {
+  background: linear-gradient(135deg, rgba(22, 38, 34, 0.9), rgba(28, 54, 48, 0.86));
+}
+
+.moneytree-pending-card {
+  background: linear-gradient(135deg, rgba(42, 35, 25, 0.9), rgba(60, 49, 30, 0.86));
+}
+
+.moneytree-stat-label,
+.moneytree-panel-header h4 {
+  display: block;
+  color: rgba(240, 227, 199, 0.72);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.moneytree-stat-value {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  line-height: 1.2;
+  color: #f3efe7;
+}
+
+.moneytree-pending-card small {
+  display: block;
+  margin-top: 8px;
+  color: rgba(240, 227, 199, 0.7);
+  font-size: 0.7rem;
+}
+
+.moneytree-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.moneytree-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moneytree-panel-header h4 {
+  margin: 0;
+}
+
+.moneytree-refresh-button {
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3efe7;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.moneytree-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.moneytree-discussion-panel {
+  gap: 16px;
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+.moneytree-discussion-panel .moneytree-panel-header h4 {
+  color: #111111;
+  font-weight: 700;
+}
+
+.moneytree-discussion-wrapper {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.moneytree-discussion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.moneytree-discussion-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: #06704D;
+  color: #f3efe7;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.moneytree-discussion-item:hover,
+.moneytree-discussion-item:focus-visible {
+  border-color: rgba(108, 182, 255, 0.45);
+  transform: translateY(-1px);
+}
+
+.moneytree-discussion-item.selected {
+  background: rgba(94, 134, 66, 0.18);
+  border-color: rgba(129, 207, 117, 0.45);
+}
+
+.moneytree-discussion-title {
+  display: block;
+  color: #f3efe7;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-discussion-type {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(240, 227, 199, 0.7);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.moneytree-discussion-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(10, 15, 18, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.moneytree-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 18, 12, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  z-index: 40;
+  overflow: hidden;
+}
+
+.moneytree-modal {
+  position: relative;
+  width: min(760px, calc(100vw - 32px));
+  max-width: 100%;
+  max-height: min(85dvh, 760px);
+  height: auto;
+  overflow: auto;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(20, 27, 22, 0.96), rgba(14, 20, 17, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.42);
+  padding: 18px;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  margin: auto;
+}
+
+.moneytree-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border: none;
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3efe7;
+  cursor: pointer;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.moneytree-discussion-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moneytree-discussion-detail-label {
+  color: rgba(240, 227, 199, 0.7);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.moneytree-discussion-detail h5 {
+  margin: 6px 0 0;
+  color: #f3efe7;
+  font-size: 1.05rem;
+  line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-discussion-type-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f3efe7;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.moneytree-discussion-prompt {
+  color: #f3efe7;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-discussion-gate {
+  color: rgba(240, 227, 199, 0.8);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.moneytree-thread-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.moneytree-thread-label {
+  color: rgba(240, 227, 199, 0.8);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.moneytree-thread-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.moneytree-thread-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moneytree-thread-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.moneytree-thread-author {
+  color: #f3efe7;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.moneytree-thread-date {
+  color: rgba(240, 227, 199, 0.72);
+  font-size: 0.7rem;
+}
+
+.moneytree-thread-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.moneytree-thread-status.approved {
+  background: rgba(40, 157, 95, 0.12);
+  color: #1f7a45;
+}
+
+.moneytree-thread-status.pending {
+  background: rgba(220, 165, 58, 0.12);
+  color: #a86b00;
+}
+
+.moneytree-thread-status.rejected {
+  background: rgba(185, 70, 70, 0.12);
+  color: #9a2d2d;
+}
+
+.moneytree-thread-content {
+  color: #ffffff;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-thread-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.moneytree-thread-challenge-button {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, rgba(245, 197, 64, 0.92), rgba(224, 163, 26, 0.9));
+  color: #1d160c;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.moneytree-thread-challenge-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.moneytree-challenge-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.moneytree-challenge-toggle {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f3efe7;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.moneytree-challenge-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.moneytree-challenge-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.moneytree-challenge-entry:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.moneytree-contribution-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.moneytree-discussion-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.moneytree-discussion-label {
+  color: rgba(240, 227, 199, 0.8);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.moneytree-discussion-form textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(5, 8, 11, 0.7);
+  color: #f3efe7;
+  padding: 12px 14px;
+  font: inherit;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.moneytree-discussion-form textarea:focus {
+  outline: 2px solid rgba(108, 182, 255, 0.45);
+  outline-offset: 1px;
+}
+
+.moneytree-discussion-form textarea::placeholder {
+  color: rgba(243, 239, 231, 0.6);
+}
+
+.moneytree-inline-challenge-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.moneytree-discussion-message {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.moneytree-discussion-message.error {
+  background: rgba(180, 73, 73, 0.14);
+  border: 1px solid rgba(180, 73, 73, 0.28);
+  color: #f7c1bf;
+}
+
+.moneytree-discussion-message.success {
+  background: rgba(92, 167, 97, 0.14);
+  border: 1px solid rgba(92, 167, 97, 0.28);
+  color: #d0f5d0;
+}
+
+.moneytree-submit-button {
+  width: fit-content;
+  min-width: 150px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(89, 167, 111, 0.9), rgba(58, 110, 74, 0.9));
+  color: #f3efe7;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.moneytree-submit-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.moneytree-activity-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 15px;
+  border-radius: 16px;
+  background: rgba(10, 15, 18, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.moneytree-review-panel {
+  gap: 14px;
+  background: rgba(17, 25, 21, 0.78);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.moneytree-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 15px;
+  border-radius: 16px;
+  background: rgba(10, 15, 18, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.moneytree-review-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moneytree-review-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #f3efe7;
+  line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-review-meta {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: rgba(240, 227, 199, 0.72);
+}
+
+.moneytree-review-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(120, 190, 115, 0.18);
+  color: #d5f9d4;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.moneytree-review-content {
+  color: #f3efe7;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-review-label {
+  color: rgba(240, 227, 199, 0.8);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.moneytree-review-reason {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(5, 8, 11, 0.7);
+  color: #f3efe7;
+  padding: 10px 12px;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.moneytree-review-reason:focus {
+  outline: 2px solid rgba(108, 182, 255, 0.45);
+  outline-offset: 1px;
+}
+
+.moneytree-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.moneytree-review-button {
+  border: none;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.moneytree-review-button.approve {
+  background: linear-gradient(135deg, rgba(89, 167, 111, 0.9), rgba(58, 110, 74, 0.9));
+  color: #f3efe7;
+}
+
+.moneytree-review-button.reject {
+  background: linear-gradient(135deg, rgba(160, 82, 82, 0.9), rgba(104, 52, 52, 0.9));
+  color: #f3efe7;
+}
+
+.moneytree-review-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.moneytree-activity-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moneytree-activity-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #f3efe7;
+  line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-activity-meta {
+  margin-top: 4px;
+  color: rgba(240, 227, 199, 0.7);
+  font-size: 0.72rem;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.moneytree-activity-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.moneytree-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: normal;
+  text-align: center;
+  max-width: 100%;
+}
+
+.badge-pending {
+  background: rgba(215, 161, 52, 0.18);
+  color: #f2cd7d;
+}
+
+.badge-approved {
+  background: rgba(120, 190, 115, 0.18);
+  color: #bfe9b6;
+}
+
+.badge-rejected {
+  background: rgba(182, 81, 81, 0.18);
+  color: #f2b0ad;
+}
+
+.moneytree-date {
+  color: rgba(240, 227, 199, 0.62);
+  font-size: 0.68rem;
+}
+
+.moneytree-reward-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(127, 207, 118, 0.14);
+  border: 1px solid rgba(127, 207, 118, 0.3);
+  color: #d5f8d0;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.moneytree-empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  padding: 18px;
+  text-align: center;
+  border-radius: 16px;
+  background: rgba(10, 15, 18, 0.7);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.moneytree-empty-state strong,
+.moneytree-empty-state p {
+  margin: 0;
+}
+
+.moneytree-empty-state strong {
+  display: block;
+  color: #f3efe7;
+  font-size: 0.9rem;
+}
+
+.moneytree-empty-state p {
+  margin-top: 8px;
+  color: rgba(240, 227, 199, 0.7);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
