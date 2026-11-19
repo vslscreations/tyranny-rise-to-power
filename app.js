@@ -201,6 +201,28 @@ const messagesState = {
 };
 
 const appState = {};
+const storeState = {
+  categories: [],
+  catalog: [],
+  selectedCategory: 'all',
+  searchTerm: '',
+  loading: false,
+  error: null,
+  hasLoaded: false,
+  selectedProductId: null,
+  confirmationProductId: null,
+  activeCheckoutProductId: null,
+  isCheckoutBusy: false,
+  checkoutError: null,
+  lastReceipt: null,
+  purchaseHistory: [],
+  purchaseHistoryLoading: false,
+  purchaseHistoryError: null,
+  taxConfig: null,
+  quote: null,
+  purchaseRequestProductId: null,
+  purchaseRequestKey: null,
+};
 let activeAppId = null;
 let lockVisible = true;
 
@@ -3672,6 +3694,816 @@ async function handleProfileEditSubmit(event) {
   renderAppContent('mylife');
 }
 
+function getStoreProductStatus(product) {
+  if (!product || !product.is_visible) {
+    return { label: 'Unavailable', tone: 'locked' };
+  }
+
+  if (product.is_locked) {
+    return { label: 'Coming Soon', tone: 'locked' };
+  }
+
+  if (product.is_purchasable) {
+    return { label: 'Available', tone: 'available' };
+  }
+
+  if (product.price === null || product.price === undefined) {
+    return { label: 'Coming Soon', tone: 'locked' };
+  }
+
+  return { label: 'Unavailable', tone: 'locked' };
+}
+
+function getStoreRequirementLabel(product) {
+  const requirements = product && typeof product.requirements === 'object' ? product.requirements : null;
+  if (!requirements) {
+    return '';
+  }
+
+  const approvedContributionCount = Number(requirements.moneytree_approved_contributions ?? 0);
+  if (Number.isFinite(approvedContributionCount) && approvedContributionCount > 0) {
+    return `${approvedContributionCount} approved contributions`;
+  }
+
+  return '';
+}
+
+function getStoreEligibilityStatus(product, quote = null) {
+  const eligibility = quote && typeof quote === 'object' && quote.eligibility && typeof quote.eligibility === 'object'
+    ? quote.eligibility
+    : null;
+
+  if (!product || product.product_key !== 'high_school_diploma') {
+    return {
+      is_eligible: true,
+      approved_contributions: 0,
+      required_approved_contributions: 0,
+      remaining_required: 0,
+      message: 'No purchase eligibility requirement.',
+    };
+  }
+
+  const required = Number(eligibility?.required_approved_contributions ?? 200);
+  const approved = Number(eligibility?.approved_contributions ?? 0);
+  const isEligible = Boolean(eligibility?.is_eligible ?? approved >= required);
+  const remainingRequired = Math.max(0, required - approved);
+
+  return {
+    is_eligible: isEligible,
+    approved_contributions: approved,
+    required_approved_contributions: required,
+    remaining_required: remainingRequired,
+    message: isEligible
+      ? 'Eligible — meets the diploma requirement.'
+      : `${approved}/${required} approved contributions. ${remainingRequired} more approved MoneyTree contribution${remainingRequired === 1 ? '' : 's'} required.`,
+  };
+}
+
+function getStoreCheckoutDisabledReason(product, quote = null) {
+  if (!product || !product.is_visible || product.is_locked || !product.is_purchasable) {
+    return 'This item is unavailable for purchase.';
+  }
+
+  if (product.price === null || product.price === undefined) {
+    return 'This item does not have a valid price.';
+  }
+
+  if (!storeState.taxConfig) {
+    return 'Store checkout is temporarily unavailable because national sales tax has not been configured.';
+  }
+
+  const eligibility = getStoreEligibilityStatus(product, quote);
+  if (!eligibility.is_eligible) {
+    return eligibility.message;
+  }
+
+  return null;
+}
+
+function getStoreReceiptRows(receipt) {
+  if (!receipt || typeof receipt !== 'object') {
+    return [];
+  }
+
+  return [
+    { label: 'Item', value: receipt.item_name || receipt.item || 'Unknown item' },
+    { label: 'Quantity', value: Number(receipt.quantity ?? 1) },
+    { label: 'Original price', value: receipt.original_item_price != null ? formatCurrency(Number(receipt.original_item_price)) : '—' },
+    { label: 'Tax rate', value: receipt.sales_tax_rate != null ? `${Number(receipt.sales_tax_rate * 100).toFixed(2)}%` : '—' },
+    { label: 'Tax amount', value: receipt.tax_amount != null ? formatCurrency(Number(receipt.tax_amount)) : '—' },
+    { label: 'Final amount', value: receipt.final_amount != null ? formatCurrency(Number(receipt.final_amount)) : '—' },
+    { label: 'Purchased', value: receipt.purchased_at ? new Date(receipt.purchased_at).toLocaleString() : '—' },
+    { label: 'Balance after purchase', value: receipt.balance_after_purchase != null ? formatCurrency(Number(receipt.balance_after_purchase)) : '—' },
+  ];
+}
+
+function createStoreIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `store-purchase-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getStoreIdempotencyKeyForProduct(productId) {
+  if (storeState.purchaseRequestProductId === productId && storeState.purchaseRequestKey) {
+    return storeState.purchaseRequestKey;
+  }
+
+  const nextKey = createStoreIdempotencyKey();
+  storeState.purchaseRequestProductId = productId;
+  storeState.purchaseRequestKey = nextKey;
+  return nextKey;
+}
+
+function clearStorePurchaseAttempt(productId) {
+  if (productId == null || storeState.purchaseRequestProductId === productId) {
+    storeState.purchaseRequestProductId = null;
+    storeState.purchaseRequestKey = null;
+  }
+}
+
+function renderStorePurchaseHistory() {
+  if (!storeState.purchaseHistory.length) {
+    return `
+      <div class="store-history-panel">
+        <h4>Purchase history</h4>
+        <p>No purchases yet.</p>
+      </div>
+    `;
+  }
+
+  const rows = storeState.purchaseHistory.map((purchase) => {
+    const status = purchase.status === 'reversed' ? 'Reversed' : 'Completed';
+    const total = purchase.final_amount != null ? formatCurrency(Number(purchase.final_amount)) : '—';
+    return `
+      <div class="store-history-item">
+        <div>
+          <strong>${escapeHtml(purchase.item_name || 'Item')}</strong>
+          <small>${escapeHtml(status)} • ${escapeHtml(purchase.quantity ?? 1)} item${Number(purchase.quantity ?? 1) === 1 ? '' : 's'}</small>
+        </div>
+        <div class="store-history-total">${escapeHtml(total)}</div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="store-history-panel">
+      <h4>Purchase history</h4>
+      <div class="store-history-list">${rows}</div>
+    </div>
+  `;
+}
+
+function renderStoreReceiptPanel() {
+  if (!storeState.lastReceipt || typeof storeState.lastReceipt !== 'object') {
+    return '';
+  }
+
+  const receiptRows = getStoreReceiptRows(storeState.lastReceipt).map((row) => `
+    <div class="store-receipt-row">
+      <span>${escapeHtml(row.label)}</span>
+      <strong>${escapeHtml(String(row.value))}</strong>
+    </div>
+  `).join('');
+
+  return `
+    <div class="store-receipt-panel">
+      <h4>Purchase receipt</h4>
+      <div class="store-receipt-list">${receiptRows}</div>
+    </div>
+  `;
+}
+
+function renderStoreDetailModal(product) {
+  if (!product) {
+    return '';
+  }
+
+  const category = storeState.categories.find((entry) => entry.id === product.category_id) || null;
+  const categoryName = category?.display_name || 'Store';
+  const productStatus = getStoreProductStatus(product);
+  const requirementText = getStoreRequirementLabel(product);
+  const quote = storeState.quote && storeState.quote.product_id === product.id ? storeState.quote : null;
+  const eligibility = getStoreEligibilityStatus(product, quote);
+  const checkoutDisabledReason = getStoreCheckoutDisabledReason(product, quote);
+  const isConfirmationReady = storeState.confirmationProductId === product.id && !storeState.isCheckoutBusy;
+  const quotePriceText = quote && quote.item_price != null ? formatCurrency(Number(quote.item_price)) : product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price not set';
+  const quoteTaxRateText = quote && quote.tax_rate != null ? `${Number(quote.tax_rate * 100).toFixed(2)}%` : '—';
+  const quoteTaxAmountText = quote && quote.tax_amount != null ? formatCurrency(Number(quote.tax_amount)) : '—';
+  const quoteFinalTotalText = quote && quote.final_total != null ? formatCurrency(Number(quote.final_total)) : '—';
+  const isBuyNowAvailable = Boolean(
+    product &&
+    product.is_visible &&
+    !product.is_locked &&
+    product.is_purchasable &&
+    product.price !== null &&
+    product.price !== undefined &&
+    !storeState.isCheckoutBusy &&
+    !checkoutDisabledReason &&
+    storeState.confirmationProductId !== product.id
+  );
+
+  return `
+    <div class="store-modal-backdrop" data-store-modal-backdrop="true">
+      <div class="store-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(product.product_name)} details">
+        <button type="button" class="store-modal-close" data-store-modal-close aria-label="Close product details">×</button>
+        <div class="store-modal-art" aria-hidden="true">${escapeHtml((product.product_name || 'ST').slice(0, 2).toUpperCase())}</div>
+        <div class="store-modal-header">
+          <span class="store-product-pill ${productStatus.tone}">${escapeHtml(productStatus.label)}</span>
+          <h4>${escapeHtml(product.product_name)}</h4>
+        </div>
+        <p class="store-modal-copy">${escapeHtml(product.description || 'No description available.')}</p>
+        <div class="store-detail-list">
+          <div><span>Category</span><strong>${escapeHtml(categoryName)}</strong></div>
+          <div><span>Item price</span><strong>${escapeHtml(quotePriceText)}</strong></div>
+          ${quote ? `<div><span>National sales tax</span><strong>${escapeHtml(quoteTaxRateText)}</strong></div>` : ''}
+          ${quote ? `<div><span>Tax amount</span><strong>${escapeHtml(quoteTaxAmountText)}</strong></div>` : ''}
+          ${quote ? `<div><span>Final total</span><strong>${escapeHtml(quoteFinalTotalText)}</strong></div>` : ''}
+          ${requirementText ? `<div><span>Requirement</span><strong>${escapeHtml(requirementText)}</strong></div>` : ''}
+          ${product.product_key === 'high_school_diploma' ? `<div><span>Eligibility</span><strong>${escapeHtml(eligibility.is_eligible ? `Eligible (${eligibility.approved_contributions}/${eligibility.required_approved_contributions})` : `Ineligible (${eligibility.approved_contributions}/${eligibility.required_approved_contributions})`)}</strong></div>` : ''}
+          <div><span>Availability</span><strong>${escapeHtml(productStatus.label)}</strong></div>
+          ${product.one_time_purchase ? '<div><span>Purchase type</span><strong>One-time purchase</strong></div>' : ''}
+        </div>
+        ${product.product_key === 'high_school_diploma' ? `<p class="store-error-state" style="margin: 0.75rem 0 0;">${escapeHtml(eligibility.message)}</p>` : ''}
+        ${checkoutDisabledReason ? `<p class="store-error-state" style="margin: 0.75rem 0 0;">${escapeHtml(checkoutDisabledReason)}</p>` : ''}
+        <div class="store-modal-actions">
+          <button type="button" class="secondary-button" data-store-modal-close>Close</button>
+          ${isBuyNowAvailable ? `<button type="button" class="primary-button" data-store-buy-now="${escapeHtml(product.id)}">Buy Now</button>` : ''}
+          ${isConfirmationReady ? `<button type="button" class="primary-button" data-store-confirm-purchase="${escapeHtml(product.id)}">Confirm Purchase</button>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+const STORE_PRIORITY_PRODUCT_KEYS = new Map([
+  ['high_school_diploma', 0],
+  ['laptop', 1],
+]);
+
+function renderStoreApp() {
+  const categoryMap = new Map(storeState.categories.map((category) => [category.id, category]));
+  const filteredCatalog = storeState.catalog
+    .filter((product) => categoryMap.has(product.category_id))
+    .sort((first, second) => {
+      const firstRank = STORE_PRIORITY_PRODUCT_KEYS.has(first.product_key)
+        ? STORE_PRIORITY_PRODUCT_KEYS.get(first.product_key)
+        : Number.MAX_SAFE_INTEGER;
+      const secondRank = STORE_PRIORITY_PRODUCT_KEYS.has(second.product_key)
+        ? STORE_PRIORITY_PRODUCT_KEYS.get(second.product_key)
+        : Number.MAX_SAFE_INTEGER;
+
+      if (firstRank !== secondRank) {
+        return firstRank - secondRank;
+      }
+
+      return (first.product_name || '').localeCompare(second.product_name || '', undefined, { sensitivity: 'base' });
+    });
+
+  const categoryButtons = storeState.categories
+    .filter((category) => category.is_visible)
+    .map((category) => {
+      const isSelected = storeState.selectedCategory === category.category_key;
+      const disabled = Boolean(category.is_locked);
+      return `
+        <button
+          type="button"
+          class="store-category ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}"
+          data-store-category-key="${escapeHtml(category.category_key)}"
+          ${disabled ? 'disabled' : ''}
+          aria-label="${escapeHtml(category.display_name)}"
+        >
+          <span>${escapeHtml(category.display_name)}</span>
+          ${disabled ? '<small>Locked</small>' : ''}
+        </button>
+      `;
+    })
+    .join('');
+
+  const productCards = filteredCatalog
+    .map((product) => {
+      const category = categoryMap.get(product.category_id);
+      const status = getStoreProductStatus(product);
+      const requirementText = getStoreRequirementLabel(product);
+      const priceText = product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price not set';
+      const artLabel = (product.product_name || 'ST').split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('').slice(0, 2) || 'ST';
+
+      return `
+        <article class="store-product" data-store-product-id="${escapeHtml(product.id)}">
+          <div class="store-product-art" aria-hidden="true">${escapeHtml(artLabel)}</div>
+          <div class="store-product-body">
+            <div class="store-product-meta">
+              <span class="store-product-category">${escapeHtml(category?.display_name || 'Store')}</span>
+              <span class="store-product-pill ${status.tone}">${escapeHtml(status.label)}</span>
+            </div>
+            <h4>${escapeHtml(product.product_name)}</h4>
+            <p>${escapeHtml(product.description || 'No description available.')}</p>
+            <div class="store-product-row">
+              <strong>${escapeHtml(priceText)}</strong>
+              ${requirementText ? `<small>${escapeHtml(requirementText)}</small>` : ''}
+            </div>
+          </div>
+        </article>
+      `;
+    })
+    .join('');
+
+  const storeModalMarkup = storeState.selectedProductId
+    ? renderStoreDetailModal(storeState.catalog.find((entry) => entry.id === storeState.selectedProductId) || null)
+    : '';
+
+  const appBody = document.querySelector('#app-store .app-body');
+  if (!appBody) {
+    return;
+  }
+
+  appBody.innerHTML = `
+    <div class="store-shell">
+      <div class="store-header">
+        <div>
+          <div class="section-kicker">Marketplace</div>
+          <h3>Store</h3>
+        </div>
+        <button type="button" class="store-refresh-button" data-store-refresh>Refresh</button>
+      </div>
+
+      <label class="store-search" for="storeSearchInput">
+        <span>Search products</span>
+        <input id="storeSearchInput" type="search" value="${escapeHtml(storeState.searchTerm)}" placeholder="Search the catalog..." />
+      </label>
+
+      <div class="store-category-strip">
+        <button
+          type="button"
+          class="store-category ${storeState.selectedCategory === 'all' ? 'selected' : ''}"
+          data-store-category-key="all"
+          aria-label="Browse all products"
+        >
+          <span>All</span>
+        </button>
+        ${categoryButtons}
+      </div>
+
+      ${storeState.checkoutError ? `
+        <div class="store-error-state">
+          <strong>Checkout issue</strong>
+          <p>${escapeHtml(storeState.checkoutError)}</p>
+        </div>
+      ` : ''}
+
+      ${storeState.taxConfig ? '' : `
+        <div class="store-error-state">
+          <strong>Store checkout unavailable</strong>
+          <p>Store checkout is temporarily unavailable because national sales tax has not been configured.</p>
+        </div>
+      `}
+
+      ${storeState.loading ? `
+        <div class="store-loading-state">
+          <strong>Loading Store catalog…</strong>
+          <p>Retrieving categories and available products.</p>
+        </div>
+      ` : ''}
+
+      ${storeState.error ? `
+        <div class="store-error-state">
+          <strong>Store unavailable</strong>
+          <p>${escapeHtml(storeState.error)}</p>
+          <button type="button" class="secondary-button" data-store-retry>Retry</button>
+        </div>
+      ` : ''}
+
+      ${!storeState.loading && !storeState.error && filteredCatalog.length === 0 ? `
+        <div class="store-empty-state">
+          <strong>No products match this filter.</strong>
+          <p>Try another search term or switch categories.</p>
+        </div>
+      ` : ''}
+
+      ${!storeState.loading && !storeState.error && filteredCatalog.length > 0 ? `
+        <div class="store-product-grid">
+          ${productCards}
+        </div>
+      ` : ''}
+
+      ${renderStoreReceiptPanel()}
+      ${renderStorePurchaseHistory()}
+    </div>
+    ${storeModalMarkup}
+  `;
+
+  const searchInput = appBody.querySelector('#storeSearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', (event) => {
+      storeState.searchTerm = event.target.value || '';
+      renderStoreApp();
+    });
+  }
+
+  appBody.querySelectorAll('[data-store-category-key]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const selected = button.dataset.storeCategoryKey;
+      if (!selected) {
+        return;
+      }
+
+      storeState.selectedCategory = selected;
+      renderStoreApp();
+    });
+  });
+
+  appBody.querySelectorAll('[data-store-product-id]').forEach((card) => {
+    card.addEventListener('click', async () => {
+      const productId = card.dataset.storeProductId;
+      if (!productId) {
+        return;
+      }
+
+      storeState.selectedProductId = productId;
+      storeState.quote = null;
+      renderStoreApp();
+
+      const product = storeState.catalog.find((entry) => entry.id === productId);
+      if (product && product.is_visible && !product.is_locked && product.is_purchasable) {
+        await loadStoreQuote(productId, 1);
+        renderStoreApp();
+      }
+    });
+  });
+
+  appBody.querySelectorAll('[data-store-buy-now]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const productId = button.dataset.storeBuyNow;
+      if (!productId) {
+        return;
+      }
+
+      const product = storeState.catalog.find((entry) => entry.id === productId);
+      if (!product) {
+        return;
+      }
+
+      const checkoutReason = getStoreCheckoutDisabledReason(product);
+      if (checkoutReason) {
+        storeState.checkoutError = checkoutReason;
+        renderStoreApp();
+        return;
+      }
+
+      const quote = await loadStoreQuote(productId, 1);
+      if (!quote) {
+        storeState.checkoutError = 'Unable to load the purchase quote for this item.';
+        renderStoreApp();
+        return;
+      }
+
+      const eligibility = getStoreEligibilityStatus(product, quote);
+      if (!eligibility.is_eligible) {
+        storeState.checkoutError = eligibility.message;
+        renderStoreApp();
+        return;
+      }
+
+      storeState.checkoutError = null;
+      storeState.confirmationProductId = productId;
+      storeState.activeCheckoutProductId = null;
+      storeState.isCheckoutBusy = false;
+      renderStoreApp();
+    });
+  });
+
+  appBody.querySelectorAll('[data-store-confirm-purchase]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const productId = button.dataset.storeConfirmPurchase;
+      if (!productId || storeState.isCheckoutBusy) {
+        return;
+      }
+
+      await handleStorePurchase(productId);
+    });
+  });
+
+  const refreshButton = appBody.querySelector('[data-store-refresh]');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => {
+      storeState.hasLoaded = false;
+      storeState.selectedProductId = null;
+      loadStoreCatalog();
+    });
+  }
+
+  const retryButton = appBody.querySelector('[data-store-retry]');
+  if (retryButton) {
+    retryButton.addEventListener('click', () => {
+      storeState.error = null;
+      storeState.hasLoaded = false;
+      loadStoreCatalog();
+    });
+  }
+
+  const modalBackdrop = appBody.querySelector('[data-store-modal-backdrop]');
+  if (modalBackdrop) {
+    modalBackdrop.addEventListener('click', (event) => {
+      if (event.target === modalBackdrop) {
+        storeState.selectedProductId = null;
+        storeState.confirmationProductId = null;
+        storeState.quote = null;
+        renderStoreApp();
+      }
+    });
+  }
+
+  appBody.querySelectorAll('[data-store-modal-close]').forEach((button) => {
+    button.addEventListener('click', () => {
+      storeState.selectedProductId = null;
+      storeState.confirmationProductId = null;
+      storeState.quote = null;
+      renderStoreApp();
+    });
+  });
+}
+
+async function loadStoreTaxConfig() {
+  const supabase = getAuthClient();
+  if (!supabase) {
+    storeState.taxConfig = null;
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke('store-checkout-status');
+    const checkoutAvailable = Boolean(data && data.checkout_available === true && !error);
+
+    if (error || !data) {
+      storeState.taxConfig = null;
+      return;
+    }
+
+    storeState.taxConfig = checkoutAvailable ? { active: true } : null;
+  } catch (error) {
+    console.error('Store checkout status load failed:', error);
+    storeState.taxConfig = null;
+  }
+}
+
+async function loadStoreQuote(productId, quantity = 1) {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+
+  if (!supabase || !session?.user) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke('store-checkout-quote', {
+      body: {
+        product_id: productId,
+        quantity,
+      },
+    });
+
+    if (error || !data) {
+      console.error('Store checkout quote load failed:', error || 'No quote data returned.');
+      return null;
+    }
+
+    storeState.quote = data;
+    return data;
+  } catch (error) {
+    console.error('Store checkout quote request failed:', error);
+    return null;
+  }
+}
+
+async function loadStorePurchaseHistory() {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+
+  if (!supabase || !session?.user) {
+    storeState.purchaseHistory = [];
+    storeState.purchaseHistoryError = null;
+    return;
+  }
+
+  storeState.purchaseHistoryLoading = true;
+  renderStoreApp();
+
+  try {
+    const { data: citizen, error: citizenError } = await supabase
+      .from('citizens')
+      .select('id')
+      .eq('auth_user_id', session.user.id)
+      .maybeSingle();
+
+    if (citizenError) {
+      throw citizenError;
+    }
+
+    if (!citizen) {
+      storeState.purchaseHistory = [];
+      storeState.purchaseHistoryError = null;
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('store_purchases')
+      .select('*')
+      .eq('citizen_id', citizen.id)
+      .order('purchased_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    storeState.purchaseHistory = data || [];
+    storeState.purchaseHistoryError = null;
+  } catch (error) {
+    console.error('Store purchase history load failed:', error);
+    storeState.purchaseHistory = [];
+    storeState.purchaseHistoryError = error?.message || 'Unable to load purchase history.';
+  } finally {
+    storeState.purchaseHistoryLoading = false;
+    renderStoreApp();
+  }
+}
+
+async function handleStorePurchase(productId) {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+  const product = storeState.catalog.find((entry) => entry.id === productId);
+
+  if (!supabase || !session?.user) {
+    storeState.checkoutError = 'Please sign in to purchase items.';
+    renderStoreApp();
+    return;
+  }
+
+  if (!product) {
+    storeState.checkoutError = 'This item is no longer available.';
+    renderStoreApp();
+    return;
+  }
+
+  const checkoutReason = getStoreCheckoutDisabledReason(product);
+  if (checkoutReason) {
+    storeState.checkoutError = checkoutReason;
+    renderStoreApp();
+    return;
+  }
+
+  if (storeState.isCheckoutBusy) {
+    return;
+  }
+
+  const idempotencyKey = getStoreIdempotencyKeyForProduct(productId);
+
+  storeState.isCheckoutBusy = true;
+  storeState.activeCheckoutProductId = productId;
+  storeState.confirmationProductId = productId;
+  storeState.checkoutError = null;
+  renderStoreApp();
+
+  try {
+    const { data, error } = await supabase.rpc('purchase_store_item', {
+      p_product_id: productId,
+      p_quantity: 1,
+      p_idempotency_key: idempotencyKey,
+    });
+
+    if (error) {
+      const message = error.message || 'Purchase failed.';
+      const normalized = message.toLowerCase();
+
+      if (normalized.includes('no active economic settings row exists') || normalized.includes('sales tax')) {
+        storeState.checkoutError = 'Store checkout is temporarily unavailable because national sales tax has not been configured.';
+      } else if (normalized.includes('insufficient balance')) {
+        storeState.checkoutError = 'Your balance is too low to complete this purchase.';
+      } else if (normalized.includes('already been consumed') || normalized.includes('one-time purchase')) {
+        storeState.checkoutError = 'This one-time item has already been purchased.';
+      } else if (normalized.includes('not purchasable') || normalized.includes('not visible') || normalized.includes('locked')) {
+        storeState.checkoutError = 'This item is unavailable for purchase.';
+      } else if (normalized.includes('requires 200 approved')) {
+        storeState.checkoutError = 'You do not meet the required approval threshold for this item.';
+      } else if (normalized.includes('duplicate') || normalized.includes('idempotency')) {
+        storeState.checkoutError = 'This purchase request is already in progress.';
+      } else {
+        storeState.checkoutError = 'The Store could not complete this purchase right now.';
+      }
+
+      storeState.isCheckoutBusy = false;
+      storeState.activeCheckoutProductId = null;
+      storeState.confirmationProductId = productId;
+      renderStoreApp();
+      return;
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    const receipt = result && typeof result.receipt === 'object' ? result.receipt : result;
+
+    storeState.lastReceipt = receipt || null;
+    storeState.checkoutError = null;
+    storeState.activeCheckoutProductId = null;
+    storeState.confirmationProductId = null;
+    storeState.selectedProductId = null;
+    clearStorePurchaseAttempt(productId);
+    await loadCitizenProfile();
+    await loadStorePurchaseHistory();
+    await loadStoreCatalog();
+  } catch (error) {
+    console.error('Store purchase failed:', error);
+    storeState.checkoutError = 'Purchase failed. Please try again.';
+    storeState.isCheckoutBusy = false;
+    storeState.activeCheckoutProductId = null;
+    storeState.confirmationProductId = productId;
+  } finally {
+    if (!storeState.checkoutError) {
+      storeState.isCheckoutBusy = false;
+    }
+    renderStoreApp();
+  }
+}
+
+async function loadStoreCatalog() {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+
+  storeState.loading = true;
+  storeState.error = null;
+  renderStoreApp();
+
+  if (!supabase || !session?.user) {
+    storeState.loading = false;
+    storeState.hasLoaded = true;
+    storeState.taxConfig = null;
+    storeState.error = 'Please sign in to browse the Store.';
+    renderStoreApp();
+    return;
+  }
+
+  try {
+    const [{ data: categories, error: categoryError }, { data: catalog, error: catalogError }] = await Promise.all([
+      supabase
+        .from('store_categories')
+        .select('id, category_key, display_name, display_order, is_visible, is_locked')
+        .eq('is_visible', true)
+        .order('display_order', { ascending: true }),
+      supabase
+        .from('store_catalog')
+        .select('id, category_id, product_key, product_name, description, price, currency, is_visible, is_purchasable, is_locked, one_time_purchase, requirements')
+        .eq('is_visible', true)
+        .order('product_name', { ascending: true }),
+    ]);
+
+    if (categoryError) {
+      throw categoryError;
+    }
+
+    if (catalogError) {
+      throw catalogError;
+    }
+
+    const categoryMap = new Map((categories || []).map((category) => [category.id, category]));
+    const visibleCatalog = (catalog || [])
+      .filter((product) => categoryMap.has(product.category_id))
+      .sort((first, second) => {
+        const firstRank = STORE_PRIORITY_PRODUCT_KEYS.has(first.product_key)
+          ? STORE_PRIORITY_PRODUCT_KEYS.get(first.product_key)
+          : Number.MAX_SAFE_INTEGER;
+        const secondRank = STORE_PRIORITY_PRODUCT_KEYS.has(second.product_key)
+          ? STORE_PRIORITY_PRODUCT_KEYS.get(second.product_key)
+          : Number.MAX_SAFE_INTEGER;
+
+        if (firstRank !== secondRank) {
+          return firstRank - secondRank;
+        }
+
+        return (first.product_name || '').localeCompare(second.product_name || '', undefined, { sensitivity: 'base' });
+      });
+
+    storeState.categories = categories || [];
+    storeState.catalog = visibleCatalog;
+    storeState.hasLoaded = true;
+    storeState.error = null;
+
+    if (storeState.selectedCategory !== 'all' && !storeState.categories.some((category) => category.category_key === storeState.selectedCategory)) {
+      storeState.selectedCategory = 'all';
+    }
+
+    await loadStoreTaxConfig();
+    await loadStorePurchaseHistory();
+    renderStoreApp();
+  } catch (error) {
+    console.error('Store catalog load failed:', error);
+    storeState.hasLoaded = true;
+    storeState.error = error?.message || 'Unable to load the Store right now. Please try again.';
+    renderStoreApp();
+  } finally {
+    storeState.loading = false;
+    renderStoreApp();
+  }
+}
+
 function renderAppContent(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
   const body = appWindow.querySelector('.app-body');
@@ -5227,24 +6059,11 @@ function renderAppContent(appId, mode = 'normal') {
   }
 
   if (appId === 'store') {
-    body.innerHTML = `
-      <div class="store-card">
-        <div class="store-grid">
-          <div class="store-item"><strong>Influence Kit</strong><span>Boost campaign reach</span><small>$820</small></div>
-          <div class="store-item"><strong>Backroom Access</strong><span>Secure a private channel</span><small>$2,400</small></div>
-          <div class="store-item"><strong>Field Agents</strong><span>Hire local operators</span><small>$1,350</small></div>
-          <div class="store-item"><strong>Signal Jammer</strong><span>Disrupt competitor chatter</span><small>$3,100</small></div>
-        </div>
-      </div>
-    `;
-
-    const storeArea = body.querySelector('.store-card');
-    if (storeArea) {
-      storeArea.scrollTop = appState[appId].scrollTop || 0;
-      storeArea.addEventListener('scroll', () => {
-        appState[appId].scrollTop = storeArea.scrollTop;
-      }, { passive: true });
+    renderStoreApp();
+    if (!storeState.hasLoaded) {
+      loadStoreCatalog();
     }
+    return;
   }
 
   if (appId === 'localnews') {
