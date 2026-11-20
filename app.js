@@ -8,6 +8,51 @@ const player = {
   balance: 'Loading...',
 };
 
+const installZoomLock = () => {
+  if (window.__tyrannyZoomLockInstalled) {
+    return;
+  }
+
+  window.__tyrannyZoomLockInstalled = true;
+
+  const isTextEntryTarget = (target) => {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable]'));
+  };
+
+  document.addEventListener('keydown', (event) => {
+    const isZoomCombo = (event.ctrlKey || event.metaKey) && (
+      event.key === '+' ||
+      event.key === '=' ||
+      event.key === '-' ||
+      event.key === '0' ||
+      event.key === 'Dead' ||
+      event.code === 'NumpadAdd' ||
+      event.code === 'NumpadSubtract' ||
+      event.code === 'Numpad0'
+    );
+
+    if (!isZoomCombo || isTextEntryTarget(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('wheel', (event) => {
+    if (!((event.ctrlKey || event.metaKey) && !isTextEntryTarget(event.target))) {
+      return;
+    }
+
+    event.preventDefault();
+  }, { passive: false });
+};
+
+installZoomLock();
+
 const builtInAvatarAssets = [
   { url: './assets/avatars/aurelia-voss.svg', label: 'Aurelia Voss' },
   { url: './assets/avatars/jasper-reed.svg', label: 'Jasper Reed' },
@@ -270,6 +315,31 @@ const votingState = {
   citizenPolls: [],
   closedPolls: [],
 };
+const localNewsState = {
+  loading: false,
+  error: null,
+  articles: [],
+  activeArticleId: null,
+  detailOpen: false,
+  activeCategory: 'Latest',
+};
+const newsroomState = {
+  loading: false,
+  error: null,
+  message: null,
+  articles: [],
+  editingId: null,
+  draft: {
+    headline: '',
+    excerpt: '',
+    featuredImageUrl: '',
+    contentHtml: '',
+    status: 'draft',
+  },
+  history: [],
+  historyIndex: -1,
+  uploadingImage: false,
+};
 const lucky7BetDenominations = [1, 2, 3, 4, 5, 10, 15, 20, 50];
 let activeAppId = null;
 let lockVisible = true;
@@ -291,6 +361,7 @@ const moderatorAppState = {
   ownerReason: '',
   ownerSubmitting: false,
   ownerHistory: [],
+  currentSubpage: 'queue',
 };
 
 const moderatorPollState = {
@@ -364,6 +435,241 @@ function escapeHtml(value) {
     '"': '&quot;',
     "'": '&#39;',
   }[character]));
+}
+
+function sanitizeRichTextHtml(rawHtml) {
+  const content = String(rawHtml ?? '');
+  if (!content.trim()) {
+    return '';
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(content, 'text/html');
+  const body = doc.body;
+  const allowedTags = new Set(['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'h1', 'h2', 'h3', 'ul', 'ol', 'li', 'blockquote', 'a', 'img', 'figure', 'figcaption', 'span']);
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_ELEMENT);
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const tagName = String(node.tagName || '').toLowerCase();
+
+    if (!allowedTags.has(tagName)) {
+      const wrapper = doc.createElement('span');
+      while (node.firstChild) {
+        wrapper.appendChild(node.firstChild);
+      }
+
+      if (node.parentNode) {
+        node.parentNode.replaceChild(wrapper, node);
+      }
+      continue;
+    }
+
+    if (tagName === 'a') {
+      const href = (node.getAttribute('href') || '').trim();
+      const safeHref = /^https?:\/\//i.test(href)
+        || /^mailto:/i.test(href)
+        || /^tel:/i.test(href)
+        || /^\//.test(href)
+        || /^#/.test(href)
+        || /^[A-Za-z0-9._%+\-/=]+$/.test(href);
+      if (!safeHref) {
+        node.replaceWith(...Array.from(node.childNodes));
+        continue;
+      }
+      node.removeAttribute('style');
+      node.removeAttribute('target');
+      node.removeAttribute('rel');
+      node.setAttribute('rel', 'noopener noreferrer');
+      node.setAttribute('target', '_blank');
+    }
+
+    if (tagName === 'img') {
+      const src = (node.getAttribute('src') || '').trim();
+      const safeSrc = /^https?:\/\//i.test(src)
+        || /^\//.test(src)
+        || /^data:image\//i.test(src)
+        || /^[A-Za-z0-9._%+\-/=]+$/.test(src);
+      if (!safeSrc) {
+        node.remove();
+        continue;
+      }
+      node.removeAttribute('style');
+      node.removeAttribute('onerror');
+      node.removeAttribute('onclick');
+      node.removeAttribute('onload');
+    }
+
+    Array.from(node.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith('on') || name === 'style') {
+        node.removeAttribute(attribute.name);
+      }
+    });
+  }
+
+  body.querySelectorAll('script, style, iframe, object, embed, svg, math, link').forEach((node) => node.remove());
+  return body.innerHTML.trim();
+}
+
+function isStorageObjectReference(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:image/')) {
+    return false;
+  }
+
+  return /^[A-Za-z0-9._%+\-/=]+$/.test(trimmed) && !trimmed.includes('javascript:');
+}
+
+function normalizeSignedStorageUrlResult(result) {
+  if (!result) {
+    return '';
+  }
+
+  if (typeof result === 'string') {
+    return result.trim();
+  }
+
+  if (typeof result === 'object') {
+    const nested = result.data && typeof result.data === 'object' ? result.data : result;
+    const candidate = nested.signedUrl || nested.signed_url || nested.url || nested.signedURL || nested.publicUrl || nested.href || nested.value || nested.path || '';
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+
+    if (Array.isArray(result)) {
+      const firstUrl = result.find((entry) => typeof entry === 'string' && entry.trim());
+      if (firstUrl) {
+        return firstUrl.trim();
+      }
+    }
+  }
+
+  return '';
+}
+
+function hasRenderableImageUrl(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return /^https?:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed) || trimmed.startsWith('/');
+}
+
+async function resolveSignedStorageUrl(rawValue, supabase = getAuthClient()) {
+  if (!rawValue) {
+    return '';
+  }
+
+  const value = String(rawValue).trim();
+  if (!value) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value) || value.startsWith('/')) {
+    return value;
+  }
+
+  if (!supabase || !isStorageObjectReference(value)) {
+    return value;
+  }
+
+  try {
+    const session = (await supabase.auth.getSession())?.data?.session;
+    if (!session?.user) {
+      return value;
+    }
+
+    const { data, error } = await supabase.rpc('get_signed_news_article_image_url', {
+      p_image_path: value,
+    });
+    const signedUrl = normalizeSignedStorageUrlResult(data);
+    if (error || !signedUrl) {
+      return value;
+    }
+
+    return signedUrl;
+  } catch (error) {
+    console.warn('Signed Local News image resolution failed:', error);
+    return value;
+  }
+}
+
+function transformHtmlImageUrls(contentHtml, signedUrlsByPath) {
+  if (!contentHtml || !signedUrlsByPath || typeof signedUrlsByPath !== 'object') {
+    return contentHtml || '';
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(contentHtml, 'text/html');
+  doc.querySelectorAll('img').forEach((image) => {
+    const src = image.getAttribute('src');
+    if (src && signedUrlsByPath[src]) {
+      image.setAttribute('src', signedUrlsByPath[src]);
+    }
+  });
+
+  return doc.body.innerHTML;
+}
+
+async function resolveLocalNewsContentForDisplay(contentHtml, supabase = getAuthClient()) {
+  if (!contentHtml) {
+    return '';
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(contentHtml, 'text/html');
+  const sources = Array.from(doc.querySelectorAll('img')).map((image) => image.getAttribute('src')).filter(Boolean);
+  const uniquePaths = [...new Set(sources.filter((value) => isStorageObjectReference(value)))];
+
+  if (!uniquePaths.length) {
+    return sanitizeRichTextHtml(contentHtml);
+  }
+
+  const signedUrlsByPath = {};
+  for (const path of uniquePaths) {
+    signedUrlsByPath[path] = await resolveSignedStorageUrl(path, supabase);
+  }
+
+  const transformed = transformHtmlImageUrls(contentHtml, signedUrlsByPath);
+  return sanitizeRichTextHtml(transformed);
+}
+
+async function resolveLocalNewsArticleForDisplay(article, supabase = getAuthClient()) {
+  if (!article || typeof article !== 'object') {
+    return article;
+  }
+
+  const nextArticle = { ...article };
+  nextArticle.featured_image_url = await resolveSignedStorageUrl(article.featured_image_url, supabase);
+  nextArticle.content_html = await resolveLocalNewsContentForDisplay(article.content_html, supabase);
+  return nextArticle;
+}
+
+function formatNewsDate(value) {
+  if (!value) {
+    return 'Recently';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Recently';
+  }
+
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function getDisplayProfession(value, fallback = 'Profile unavailable') {
@@ -6002,6 +6308,10 @@ function renderAppContent(appId, mode = 'normal') {
       moderationMessage: null,
       moderationError: null,
       moderationProcessingIds: [],
+      clockInStatus: null,
+      clockInSubmitting: false,
+      clockInNotice: null,
+      clockInTimer: null,
     };
 
     const getDiscussionContributionType = (discussion) => {
@@ -6458,6 +6768,116 @@ function renderAppContent(appId, mode = 'normal') {
       }
     };
 
+    const formatClockInCountdown = (secondsRemaining) => {
+      const totalSeconds = Number.isFinite(secondsRemaining) ? Math.max(0, Math.floor(secondsRemaining)) : 0;
+      const minutes = Math.floor(totalSeconds / 60);
+      const remainingSeconds = totalSeconds % 60;
+      return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+    };
+
+    const formatClockInTimestamp = (value) => {
+      if (!value) {
+        return 'Next hourly window';
+      }
+
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return 'Next hourly window';
+      }
+
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC',
+      });
+    };
+
+    const loadClockInStatus = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moneytreeState.clockInStatus = null;
+        moneytreeState.clockInNotice = 'Your session has expired. Please sign in again.';
+        return null;
+      }
+
+      try {
+        const { data, error } = await supabase.rpc('get_moneytree_clock_in_status');
+        if (error) {
+          throw error;
+        }
+
+        const row = Array.isArray(data) ? data[0] : data;
+        moneytreeState.clockInStatus = row
+          ? {
+              ...row,
+              reward_amount: Number(row.reward_amount ?? 25),
+              remaining_seconds: Number(row.remaining_seconds ?? 0),
+              already_claimed: Boolean(row.already_claimed),
+              window_is_open: Boolean(row.window_is_open),
+              can_claim: Boolean(row.can_claim),
+              fetchedAtMs: Date.now(),
+            }
+          : null;
+
+        return moneytreeState.clockInStatus;
+      } catch (error) {
+        console.error('MoneyTree Clock In status load failed:', error);
+        moneytreeState.clockInStatus = null;
+        moneytreeState.clockInNotice = error?.message || 'Unable to load the Clock In status right now.';
+        return null;
+      }
+    };
+
+    const handleClockInClaim = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moneytreeState.clockInNotice = 'Your session has expired. Please sign in again.';
+        return;
+      }
+
+      const currentStatus = moneytreeState.clockInStatus;
+      if (!currentStatus || !currentStatus.can_claim || moneytreeState.clockInSubmitting) {
+        return;
+      }
+
+      moneytreeState.clockInSubmitting = true;
+      moneytreeState.clockInNotice = null;
+
+      try {
+        const idempotencyKey = `${profileState.citizen?.id || session.user.id}:${currentStatus.window_start || 'current'}`;
+        const { data, error } = await supabase.rpc('claim_moneytree_clock_in', {
+          p_idempotency_key: idempotencyKey,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        const success = Boolean(result?.success);
+        const resultMessage = typeof result?.message === 'string' ? result.message : '';
+
+        moneytreeState.clockInNotice = success ? resultMessage || 'Clocked in successfully. Reward credited.' : (resultMessage || 'Clock In was unavailable.');
+
+        if (success && profileState.citizen?.id) {
+          await refreshCitizenBalanceFromSupabase(profileState.citizen.id);
+        }
+
+        await loadClockInStatus();
+        await loadMoneytreeView();
+      } catch (error) {
+        console.error('MoneyTree Clock In claim failed:', error);
+        moneytreeState.clockInNotice = error?.message || 'Unable to process your Clock In request right now.';
+      } finally {
+        moneytreeState.clockInSubmitting = false;
+      }
+    };
+
     const renderDashboard = (state, discussions = moneytreeState.discussions) => {
       const dashboard = state || {};
       const availableBalance = Number(dashboard.available_balance ?? 0);
@@ -6467,6 +6887,66 @@ function renderAppContent(appId, mode = 'normal') {
       const selectedDiscussion = moneytreeState.selectedDiscussionId
         ? activeDiscussions.find((discussion) => discussion.id === moneytreeState.selectedDiscussionId) || null
         : null;
+      const clockInStatus = moneytreeState.clockInStatus || null;
+
+      const effectiveNow = clockInStatus?.server_now && clockInStatus?.fetchedAtMs
+        ? new Date(new Date(clockInStatus.server_now).getTime() + (Date.now() - clockInStatus.fetchedAtMs))
+        : new Date();
+
+      const clockInWindowActive = Boolean(clockInStatus?.window_is_open && clockInStatus?.can_claim && !clockInStatus?.already_claimed);
+      const clockInButtonDisabled = !clockInWindowActive || moneytreeState.clockInSubmitting;
+      const remainingSeconds = clockInWindowActive && clockInStatus?.window_end
+        ? Math.max(0, Math.ceil((new Date(clockInStatus.window_end).getTime() - effectiveNow.getTime()) / 1000))
+        : Number(clockInStatus?.remaining_seconds ?? 0);
+
+      const clockInStatusLabel = clockInWindowActive
+        ? 'Available now'
+        : clockInStatus?.already_claimed
+          ? 'Already claimed'
+          : clockInStatus?.window_is_open
+            ? 'Window closed'
+            : 'Next window opens soon';
+
+      const nextEligibleDisplay = clockInStatus?.next_eligible_at
+        ? formatClockInTimestamp(clockInStatus.next_eligible_at)
+        : 'the next hourly window';
+
+      const clockInNotice = moneytreeState.clockInNotice || clockInStatus?.message || 'When the next window opens, you will be eligible to claim $25.00.';
+      const countdownText = clockInWindowActive ? formatClockInCountdown(remainingSeconds) : '00:00';
+
+      const clockInMarkup = `
+        <div class="moneytree-panel moneytree-clockin-panel" data-moneytree-clockin-root>
+          <div class="moneytree-panel-header">
+            <h4>Clock In</h4>
+          </div>
+          <div class="moneytree-clockin-body">
+            <div class="moneytree-clockin-header-row">
+              <div>
+                <div class="moneytree-clockin-label">Reward</div>
+                <div class="moneytree-clockin-reward">$25.00</div>
+              </div>
+              <span class="moneytree-clockin-status ${clockInWindowActive ? 'active' : 'inactive'}">${escapeHtml(clockInStatusLabel)}</span>
+            </div>
+            <div class="moneytree-clockin-countdown-wrap">
+              <div class="moneytree-clockin-countdown-label">Time remaining</div>
+              <div class="moneytree-clockin-countdown" data-moneytree-clockin-countdown>${escapeHtml(countdownText)}</div>
+            </div>
+            <div class="moneytree-clockin-meta">
+              <span>Window: 00:00–04:59 UTC</span>
+              <span>Next eligible: ${escapeHtml(nextEligibleDisplay)}</span>
+            </div>
+            ${clockInNotice ? `<div class="moneytree-clockin-message ${clockInWindowActive ? 'success' : 'info'}">${escapeHtml(clockInNotice)}</div>` : ''}
+            <button
+              type="button"
+              class="moneytree-submit-button moneytree-clockin-button"
+              data-action="moneytree-clock-in"
+              ${clockInButtonDisabled ? 'disabled' : ''}
+            >
+              ${moneytreeState.clockInSubmitting ? 'Claiming…' : (clockInWindowActive ? 'Clock In' : 'Unavailable')}
+            </button>
+          </div>
+        </div>
+      `;
 
       if (selectedDiscussion) {
         moneytreeState.selectedDiscussionId = selectedDiscussion.id;
@@ -6615,6 +7095,8 @@ function renderAppContent(appId, mode = 'normal') {
             </div>
           </div>
 
+          ${clockInMarkup}
+
           <div class="moneytree-panel moneytree-discussion-panel">
             <div class="moneytree-panel-header">
               <h4>Available Discussions</h4>
@@ -6654,8 +7136,14 @@ function renderAppContent(appId, mode = 'normal') {
           moneytreeState.submitDraft = '';
           moneytreeState.submitRequestId = null;
           moneytreeState.submitting = false;
+          moneytreeState.clockInNotice = null;
           await loadMoneytreeView();
         });
+      }
+
+      const clockInButton = body.querySelector('[data-action="moneytree-clock-in"]');
+      if (clockInButton) {
+        clockInButton.addEventListener('click', handleClockInClaim);
       }
 
       body.querySelectorAll('[data-action="moneytree-select-discussion"]').forEach((button) => {
@@ -7016,6 +7504,7 @@ function renderAppContent(appId, mode = 'normal') {
           throw error;
         }
 
+        await loadClockInStatus();
         const discussions = await loadActiveDiscussions();
         await loadModeratorQueue();
         renderDashboard(data || {}, discussions);
@@ -7045,13 +7534,50 @@ function renderAppContent(appId, mode = 'normal') {
       }
     };
 
+    if (moneytreeState.clockInTimer) {
+      clearInterval(moneytreeState.clockInTimer);
+    }
+
+    moneytreeState.clockInTimer = setInterval(() => {
+      const root = document.querySelector('[data-moneytree-clockin-root]');
+      if (!root || !moneytreeState.clockInStatus || !moneytreeState.clockInStatus.window_is_open || moneytreeState.clockInStatus.already_claimed) {
+        return;
+      }
+
+      const endTime = new Date(moneytreeState.clockInStatus.window_end).getTime();
+      if (!Number.isFinite(endTime)) {
+        return;
+      }
+
+      const effectiveNow = moneytreeState.clockInStatus.server_now && moneytreeState.clockInStatus.fetchedAtMs
+        ? new Date(new Date(moneytreeState.clockInStatus.server_now).getTime() + (Date.now() - moneytreeState.clockInStatus.fetchedAtMs))
+        : new Date();
+
+      const remainingSeconds = Math.max(0, Math.ceil((endTime - effectiveNow.getTime()) / 1000));
+      const countdownEl = root.querySelector('[data-moneytree-clockin-countdown]');
+      if (countdownEl) {
+        countdownEl.textContent = formatClockInCountdown(remainingSeconds);
+      }
+
+      if (remainingSeconds <= 0) {
+        loadClockInStatus();
+      }
+    }, 1000);
+
     loadMoneytreeView();
   }
 
   if (appId === 'moderator') {
     body.innerHTML = `
       <div class="moneytree-dashboard">
-        <div class="moneytree-panel moneytree-discussion-panel">
+        <div class="moderator-subpage-nav" role="tablist" aria-label="Moderator tools">
+          <button type="button" class="secondary-button moderator-subpage-button active" data-action="moderator-subpage" data-subpage="queue" aria-pressed="true">Moderation Queue</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="owner" aria-pressed="false">Owner Balance</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="polls" aria-pressed="false">Poll Management</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="newsroom" aria-pressed="false">Newsroom</button>
+        </div>
+
+        <div class="moneytree-panel moneytree-discussion-panel moderator-subpage-panel" data-moderator-subpage="queue">
           <div class="moneytree-panel-header">
             <h4>Moderator Dashboard</h4>
             <button type="button" class="moneytree-refresh-button" data-action="moderator-refresh-queue">Refresh</button>
@@ -7059,18 +7585,25 @@ function renderAppContent(appId, mode = 'normal') {
           <div id="moderatorQueueState" class="moneytree-empty-state"><strong>Loading moderation queue…</strong><p>Verifying moderator authorization and fetching pending submissions.</p></div>
         </div>
 
-        <div class="moneytree-panel">
+        <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="owner">
           <div class="moneytree-panel-header">
             <h4>Owner Balance Management</h4>
           </div>
           <div id="moderatorOwnerState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before you can adjust balances.</p></div>
         </div>
 
-        <div class="moneytree-panel">
+        <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="polls">
           <div class="moneytree-panel-header">
             <h4>Poll Management</h4>
           </div>
           <div id="moderatorPollState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before managing civic polls.</p></div>
+        </div>
+
+        <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="newsroom">
+          <div class="moneytree-panel-header">
+            <h4>Newsroom</h4>
+          </div>
+          <div id="moderatorNewsroomState" class="moneytree-empty-state"><strong>Loading newsroom…</strong><p>Checking moderator access before loading local articles.</p></div>
         </div>
       </div>
     `;
@@ -7078,6 +7611,570 @@ function renderAppContent(appId, mode = 'normal') {
     const queueState = document.getElementById('moderatorQueueState');
     const ownerState = document.getElementById('moderatorOwnerState');
     const pollState = document.getElementById('moderatorPollState');
+    const newsroomStateEl = document.getElementById('moderatorNewsroomState');
+
+    const syncModeratorSubpageVisibility = () => {
+      const activePage = moderatorAppState.currentSubpage || 'queue';
+      document.querySelectorAll('.moderator-subpage-panel').forEach((panel) => {
+        const isActive = panel.dataset.moderatorSubpage === activePage;
+        panel.hidden = !isActive;
+        panel.classList.toggle('is-active', isActive);
+      });
+
+      document.querySelectorAll('[data-action="moderator-subpage"]').forEach((button) => {
+        const isActive = (button.getAttribute('data-subpage') || 'queue') === activePage;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+    };
+
+    const renderNewsroomPanel = () => {
+      if (!newsroomStateEl) {
+        return;
+      }
+
+      const articles = newsroomState.articles || [];
+      const draft = newsroomState.draft || {
+        headline: '',
+        excerpt: '',
+        featuredImageUrl: '',
+        contentHtml: '',
+        status: 'draft',
+      };
+
+      if (newsroomState.loading) {
+        newsroomStateEl.className = 'moneytree-empty-state';
+        newsroomStateEl.innerHTML = '<strong>Loading news articles…</strong><p>Checking the latest newsroom updates and draft status.</p>';
+        initialiseNewsroomEditor();
+        return;
+      }
+
+      const formMarkup = `
+        <div class="moneytree-review-item newsroom-editor-shell">
+          <div class="moneytree-review-header newsroom-editor-header">
+            <div>
+              <div class="moneytree-review-title">${newsroomState.editingId ? 'Edit article' : 'New article'}</div>
+              <div class="moneytree-review-meta">Local newsroom update</div>
+            </div>
+          </div>
+
+          <div class="newsroom-editor-stack">
+            <div class="newsroom-field newsroom-field-wide">
+              <label class="moneytree-review-label" for="newsroom-headline">Headline</label>
+              <input id="newsroom-headline" class="moneytree-review-reason" type="text" value="${escapeHtml(draft.headline)}" placeholder="Headline" />
+            </div>
+
+            <div class="newsroom-field newsroom-field-wide">
+              <label class="moneytree-review-label" for="newsroom-content-html">Article body</label>
+              <textarea id="newsroom-content-html" class="moneytree-review-reason" rows="10" placeholder="Write the article here...">${escapeHtml(draft.contentHtml)}</textarea>
+            </div>
+
+            <div class="newsroom-field newsroom-field-wide">
+              <label class="moneytree-review-label">Add image</label>
+              <div class="newsroom-media-row">
+                <input id="newsroom-featured-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+                <button type="button" class="secondary-button" data-action="newsroom-upload-featured-image" ${newsroomState.uploadingImage ? 'disabled' : ''}>${newsroomState.uploadingImage ? 'Uploading…' : 'Upload image'}</button>
+              </div>
+              ${draft.featuredImageUrl ? `<div class="newsroom-upload-preview"><span>Selected image</span><small>${escapeHtml(draft.featuredImageUrl)}</small></div>` : ''}
+            </div>
+          </div>
+
+          ${newsroomState.error ? `<div class="moneytree-discussion-message error">${escapeHtml(newsroomState.error)}</div>` : ''}
+          ${newsroomState.message ? `<div class="moneytree-discussion-message success">${escapeHtml(newsroomState.message)}</div>` : ''}
+
+          <div class="moneytree-review-actions">
+            <button type="button" class="moneytree-review-button approve" data-action="newsroom-save-draft">Save draft</button>
+            <button type="button" class="moneytree-review-button approve" data-action="newsroom-publish">Publish</button>
+            ${newsroomState.editingId ? '<button type="button" class="moneytree-review-button reject" data-action="newsroom-new-article">New article</button>' : ''}
+          </div>
+        </div>
+      `;
+
+      const listMarkup = articles.length ? articles.map((article) => `
+        <article class="moneytree-review-item newsroom-article-card">
+          <div class="moneytree-review-header">
+            <div>
+              <div class="moneytree-review-title">${escapeHtml(article.headline || 'Untitled article')}</div>
+              <div class="moneytree-review-meta">${escapeHtml(article.status || 'draft')} • ${escapeHtml(formatNewsDate(article.published_at || article.created_at))}</div>
+            </div>
+            <span class="moneytree-review-pill">${escapeHtml(article.status || 'draft')}</span>
+          </div>
+
+          <div class="moneytree-review-content">
+            <p>${escapeHtml(article.excerpt || 'No synopsis has been added yet.')}</p>
+          </div>
+
+          <div class="moneytree-review-actions">
+            <button type="button" class="moneytree-review-button approve" data-action="newsroom-edit-article" data-article-id="${escapeHtml(article.id || '')}">Edit</button>
+            <button type="button" class="moneytree-review-button approve" data-action="newsroom-publish-existing" data-article-id="${escapeHtml(article.id || '')}">Publish</button>
+            <button type="button" class="moneytree-review-button reject" data-action="newsroom-archive-article" data-article-id="${escapeHtml(article.id || '')}">Archive</button>
+          </div>
+        </article>
+      `).join('') : '<div class="moneytree-empty-state"><strong>No newsroom articles yet.</strong><p>Draft a story to begin publishing local coverage.</p></div>';
+
+      newsroomStateEl.className = 'moneytree-activity-list';
+      newsroomStateEl.innerHTML = `${formMarkup}${listMarkup}`;
+      initialiseNewsroomEditor();
+    };
+
+    const syncNewsroomDraft = (article) => {
+      newsroomState.editingId = article?.id || null;
+      newsroomState.draft = {
+        headline: article?.headline || '',
+        excerpt: article?.excerpt || '',
+        featuredImageUrl: article?.featured_image_url || '',
+        contentHtml: article?.content_html || '',
+        status: article?.status || 'draft',
+      };
+      newsroomState.history = [article?.content_html || ''];
+      newsroomState.historyIndex = 0;
+    };
+
+    const pushNewsroomHistory = (contentHtml) => {
+      const cleaned = String(contentHtml ?? '');
+      const current = newsroomState.history[newsroomState.historyIndex] ?? '';
+
+      if (current === cleaned) {
+        return;
+      }
+
+      newsroomState.history = newsroomState.history.slice(0, newsroomState.historyIndex + 1);
+      newsroomState.history.push(cleaned);
+      newsroomState.historyIndex = newsroomState.history.length - 1;
+
+      if (newsroomState.history.length > 25) {
+        newsroomState.history = newsroomState.history.slice(-25);
+        newsroomState.historyIndex = newsroomState.history.length - 1;
+      }
+    };
+
+    const updateNewsroomContentFromTextarea = () => {
+      const textarea = document.getElementById('newsroom-content-html');
+      if (!textarea) {
+        return;
+      }
+      newsroomState.draft.contentHtml = textarea.value;
+      pushNewsroomHistory(textarea.value);
+    };
+
+    const applyNewsroomFormatting = (formatName) => {
+      const textarea = document.getElementById('newsroom-content-html');
+      if (!textarea) {
+        return;
+      }
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const currentValue = textarea.value;
+      const selectedText = currentValue.slice(start, end) || 'text';
+      const insertPair = (openTag, closeTag) => {
+        const nextValue = `${currentValue.slice(0, start)}${openTag}${selectedText}${closeTag}${currentValue.slice(end)}`;
+        textarea.value = nextValue;
+        textarea.focus();
+        const nextStart = start + openTag.length;
+        textarea.setSelectionRange(nextStart, nextStart + selectedText.length);
+        updateNewsroomContentFromTextarea();
+      };
+
+      if (formatName === 'undo') {
+        if (newsroomState.historyIndex <= 0) {
+          return;
+        }
+        newsroomState.historyIndex -= 1;
+        const previousValue = newsroomState.history[newsroomState.historyIndex] ?? '';
+        textarea.value = previousValue;
+        newsroomState.draft.contentHtml = previousValue;
+        return;
+      }
+
+      if (formatName === 'redo') {
+        if (newsroomState.historyIndex >= newsroomState.history.length - 1) {
+          return;
+        }
+        newsroomState.historyIndex += 1;
+        const nextValue = newsroomState.history[newsroomState.historyIndex] ?? '';
+        textarea.value = nextValue;
+        newsroomState.draft.contentHtml = nextValue;
+        return;
+      }
+
+      switch (formatName) {
+        case 'bold':
+          insertPair('<strong>', '</strong>');
+          break;
+        case 'italic':
+          insertPair('<em>', '</em>');
+          break;
+        case 'underline':
+          insertPair('<u>', '</u>');
+          break;
+        case 'heading':
+          insertPair('<h2>', '</h2>');
+          break;
+        case 'bullet-list':
+          insertPair('<ul><li>', '</li></ul>');
+          break;
+        case 'numbered-list':
+          insertPair('<ol><li>', '</li></ol>');
+          break;
+        case 'blockquote':
+          insertPair('<blockquote>', '</blockquote>');
+          break;
+        default:
+          textarea.focus();
+          break;
+      }
+    };
+
+    const getAllowedUploadMimeTypes = () => new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+    const uploadNewsroomMedia = async (file, mode = 'featured') => {
+      if (!file) {
+        return null;
+      }
+
+      if (!getAllowedUploadMimeTypes().has(file.type)) {
+        throw new Error('Only PNG, JPG, WEBP, and GIF images are allowed.');
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('Image files must be 5MB or smaller.');
+      }
+
+      const extension = file.name?.split('.').pop()?.toLowerCase() || 'png';
+      const objectPath = `newsroom/${mode}/${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}.${extension}`;
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        throw new Error('Your session has expired. Please sign in again.');
+      }
+
+      const { data, error } = await supabase.storage.from('local-news-media').upload(objectPath, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      return data?.path || objectPath;
+    };
+
+    const uploadFeaturedImage = async () => {
+      const input = document.getElementById('newsroom-featured-image-input');
+      const file = input?.files?.[0];
+      if (!file) {
+        newsroomState.error = 'Choose an image file before uploading it.';
+        newsroomState.message = null;
+        renderNewsroomPanel();
+        return;
+      }
+
+      try {
+        newsroomState.uploadingImage = true;
+        newsroomState.error = null;
+        newsroomState.message = 'Uploading featured image…';
+        renderNewsroomPanel();
+
+        const uploadedPath = await uploadNewsroomMedia(file, 'featured');
+        newsroomState.draft.featuredImageUrl = uploadedPath;
+        newsroomState.message = 'Featured image uploaded successfully.';
+        if (input) {
+          input.value = '';
+        }
+        renderNewsroomPanel();
+      } catch (error) {
+        console.error('Featured image upload failed:', error);
+        newsroomState.error = error?.message || 'The featured image could not be uploaded.';
+        newsroomState.message = null;
+        renderNewsroomPanel();
+      } finally {
+        newsroomState.uploadingImage = false;
+      }
+    };
+
+    const insertInlineImageIntoEditor = async () => {
+      const input = document.getElementById('newsroom-inline-image-input');
+      if (!input) {
+        return;
+      }
+
+      input.click();
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) {
+          return;
+        }
+
+        try {
+          newsroomState.uploadingImage = true;
+          newsroomState.error = null;
+          newsroomState.message = 'Uploading image…';
+          renderNewsroomPanel();
+
+          const uploadedPath = await uploadNewsroomMedia(file, 'inline');
+          const textarea = document.getElementById('newsroom-content-html');
+          if (!textarea) {
+            throw new Error('The editor is unavailable.');
+          }
+
+          const imageHtml = `<img src="${uploadedPath}" alt="Newsroom inline image" />`;
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const currentValue = textarea.value;
+          textarea.value = `${currentValue.slice(0, start)}${imageHtml}${currentValue.slice(end)}`;
+          textarea.focus();
+          textarea.setSelectionRange(start + imageHtml.length, start + imageHtml.length);
+          newsroomState.draft.contentHtml = textarea.value;
+          pushNewsroomHistory(textarea.value);
+          newsroomState.message = 'Inline image uploaded and inserted successfully.';
+          renderNewsroomPanel();
+        } catch (error) {
+          console.error('Inline image upload failed:', error);
+          newsroomState.error = error?.message || 'The inline image could not be uploaded.';
+          newsroomState.message = null;
+          renderNewsroomPanel();
+        } finally {
+          newsroomState.uploadingImage = false;
+          input.value = '';
+          input.onchange = null;
+        }
+      };
+    };
+
+    const loadNewsroomArticles = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        newsroomState.loading = false;
+        newsroomState.error = 'Your session has expired. Please sign in again.';
+        newsroomState.articles = [];
+        renderNewsroomPanel();
+        return [];
+      }
+
+      newsroomState.loading = true;
+      newsroomState.error = null;
+      newsroomState.message = null;
+      renderNewsroomPanel();
+
+      try {
+        const { data, error } = await supabase.rpc('get_newsroom_articles_for_moderator');
+        if (error) {
+          throw error;
+        }
+
+        newsroomState.articles = Array.isArray(data)
+          ? data.map((article) => ({
+              id: article?.id ?? article?.article_id ?? null,
+              headline: article?.headline ?? 'Untitled article',
+              excerpt: article?.excerpt ?? '',
+              featured_image_url: article?.featured_image_url ?? '',
+              content_html: article?.content_html ?? '',
+              status: article?.status ?? 'draft',
+              created_at: article?.created_at ?? null,
+              published_at: article?.published_at ?? null,
+            })).filter((article) => article.id)
+          : [];
+
+        if (newsroomState.editingId && !newsroomState.articles.some((article) => article.id === newsroomState.editingId)) {
+          newsroomState.editingId = null;
+          newsroomState.draft = { headline: '', excerpt: '', featuredImageUrl: '', contentHtml: '', status: 'draft' };
+        }
+      } catch (error) {
+        console.error('Newsroom load failed:', error);
+        newsroomState.articles = [];
+        newsroomState.error = error?.message || 'Unable to load the newsroom right now.';
+      } finally {
+        newsroomState.loading = false;
+        renderNewsroomPanel();
+      }
+    };
+
+    const saveNewsroomDraft = async (targetStatus = 'draft') => {
+      const headlineInput = document.getElementById('newsroom-headline');
+      const excerptInput = document.getElementById('newsroom-excerpt');
+      const contentInput = document.getElementById('newsroom-content-html');
+      const statusSelect = document.getElementById('newsroom-status-select');
+
+      const headline = (headlineInput?.value || newsroomState.draft.headline || '').trim();
+      const excerpt = (excerptInput?.value || newsroomState.draft.excerpt || '').trim();
+      const featuredImageUrl = String(newsroomState.draft.featuredImageUrl || '').trim();
+      const contentHtml = (contentInput?.value || newsroomState.draft.contentHtml || '').trim();
+      const nextStatus = (statusSelect?.value || targetStatus || newsroomState.draft.status || 'draft');
+
+      if (!headline) {
+        newsroomState.error = 'A headline is required before saving the story.';
+        newsroomState.message = null;
+        renderNewsroomPanel();
+        return;
+      }
+
+      if (!contentHtml) {
+        newsroomState.error = 'Article content is required before saving or publishing.';
+        newsroomState.message = null;
+        renderNewsroomPanel();
+        return;
+      }
+
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        newsroomState.error = 'Your session has expired. Please sign in again.';
+        newsroomState.message = null;
+        renderNewsroomPanel();
+        return;
+      }
+
+      try {
+        newsroomState.error = null;
+        newsroomState.message = targetStatus === 'published' || nextStatus === 'published' ? 'Publishing article…' : 'Saving draft…';
+        renderNewsroomPanel();
+
+        const { data, error } = await supabase.rpc('upsert_news_article', {
+          p_id: newsroomState.editingId || null,
+          p_headline: headline,
+          p_excerpt: excerpt,
+          p_featured_image_url: featuredImageUrl || null,
+          p_content_html: sanitizeRichTextHtml(contentHtml),
+          p_status: targetStatus === 'published' || nextStatus === 'published' ? 'published' : (nextStatus === 'archived' ? 'archived' : 'draft'),
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        newsroomState.message = result?.result === 'published' ? 'Article published successfully.' : 'Article saved successfully.';
+        newsroomState.error = null;
+        newsroomState.editingId = result?.article_id || newsroomState.editingId || null;
+        newsroomState.draft = {
+          headline,
+          excerpt,
+          featuredImageUrl,
+          contentHtml: sanitizeRichTextHtml(contentHtml),
+          status: targetStatus === 'published' || nextStatus === 'published' ? 'published' : (nextStatus === 'archived' ? 'archived' : 'draft'),
+        };
+        await loadNewsroomArticles();
+      } catch (error) {
+        console.error('Newsroom save failed:', error);
+        newsroomState.error = error?.message || 'Unable to save the newsroom article.';
+        newsroomState.message = null;
+        renderNewsroomPanel();
+      }
+    };
+
+    const resetNewsroomDraft = () => {
+      newsroomState.editingId = null;
+      newsroomState.draft = {
+        headline: '',
+        excerpt: '',
+        featuredImageUrl: '',
+        contentHtml: '',
+        status: 'draft',
+      };
+      renderNewsroomPanel();
+    };
+
+    const initialiseNewsroomEditor = () => {
+      const saveButton = body.querySelector('[data-action="newsroom-save-draft"]');
+      if (saveButton && !saveButton.dataset.localNewsroomBound) {
+        saveButton.dataset.localNewsroomBound = 'true';
+        saveButton.addEventListener('click', () => saveNewsroomDraft('draft'));
+      }
+
+      const publishButton = body.querySelector('[data-action="newsroom-publish"]');
+      if (publishButton && !publishButton.dataset.localNewsroomBound) {
+        publishButton.dataset.localNewsroomBound = 'true';
+        publishButton.addEventListener('click', () => saveNewsroomDraft('published'));
+      }
+
+      const uploadImageButton = body.querySelector('[data-action="newsroom-upload-featured-image"]');
+      if (uploadImageButton && !uploadImageButton.dataset.localNewsroomBound) {
+        uploadImageButton.dataset.localNewsroomBound = 'true';
+        uploadImageButton.addEventListener('click', uploadFeaturedImage);
+      }
+
+      const inlineImageButton = body.querySelector('[data-action="newsroom-insert-inline-image"]');
+      if (inlineImageButton && !inlineImageButton.dataset.localNewsroomBound) {
+        inlineImageButton.dataset.localNewsroomBound = 'true';
+        inlineImageButton.addEventListener('click', insertInlineImageIntoEditor);
+      }
+
+      const formatButtons = body.querySelectorAll('[data-action="newsroom-format"]');
+      formatButtons.forEach((button) => {
+        if (button.dataset.localNewsroomFormatBound) {
+          return;
+        }
+        button.dataset.localNewsroomFormatBound = 'true';
+        button.addEventListener('click', () => applyNewsroomFormatting(button.dataset.format || 'bold'));
+      });
+
+      const textarea = document.getElementById('newsroom-content-html');
+      if (textarea && !textarea.dataset.localNewsroomBound) {
+        textarea.dataset.localNewsroomBound = 'true';
+        textarea.addEventListener('input', updateNewsroomContentFromTextarea);
+      }
+
+      const newArticleButton = body.querySelector('[data-action="newsroom-new-article"]');
+      if (newArticleButton && !newArticleButton.dataset.localNewsroomBound) {
+        newArticleButton.dataset.localNewsroomBound = 'true';
+        newArticleButton.addEventListener('click', resetNewsroomDraft);
+      }
+
+      body.querySelectorAll('[data-action="newsroom-edit-article"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const articleId = button.getAttribute('data-article-id');
+          const article = newsroomState.articles.find((entry) => entry.id === articleId);
+          if (!article) {
+            return;
+          }
+          syncNewsroomDraft(article);
+          renderNewsroomPanel();
+          initialiseNewsroomEditor();
+        });
+      });
+
+      body.querySelectorAll('[data-action="newsroom-publish-existing"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const articleId = button.getAttribute('data-article-id');
+          const article = newsroomState.articles.find((entry) => entry.id === articleId);
+          if (!article) {
+            return;
+          }
+          syncNewsroomDraft(article);
+          await saveNewsroomDraft('published');
+        });
+      });
+
+      body.querySelectorAll('[data-action="newsroom-archive-article"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const articleId = button.getAttribute('data-article-id');
+          const article = newsroomState.articles.find((entry) => entry.id === articleId);
+          if (!article) {
+            return;
+          }
+          syncNewsroomDraft(article);
+          const currentValue = newsroomState.draft.status;
+          newsroomState.draft.status = 'archived';
+          const element = document.getElementById('newsroom-status-select');
+          if (element) {
+            element.value = 'archived';
+          }
+          await saveNewsroomDraft('archived');
+          newsroomState.draft.status = currentValue;
+        });
+      });
+    };
+
+    renderNewsroomPanel();
+    initialiseNewsroomEditor();
+    loadNewsroomArticles();
 
     const renderModeratorPollPanel = () => {
       if (!pollState) {
@@ -7757,6 +8854,16 @@ function renderAppContent(appId, mode = 'normal') {
     if (!body.dataset.moderatorActionDelegationBound) {
       body.dataset.moderatorActionDelegationBound = 'true';
       body.addEventListener('click', async (event) => {
+        const subpageButton = event.target.closest('[data-action="moderator-subpage"]');
+        if (subpageButton) {
+          const nextSubpage = subpageButton.getAttribute('data-subpage');
+          if (nextSubpage) {
+            moderatorAppState.currentSubpage = nextSubpage;
+            syncModeratorSubpageVisibility();
+          }
+          return;
+        }
+
         const approveButton = event.target.closest('[data-action="moderator-approve-contribution"]');
         if (approveButton) {
           const contributionId = approveButton.getAttribute('data-contribution-id');
@@ -8117,6 +9224,7 @@ function renderAppContent(appId, mode = 'normal') {
       });
     }
 
+    syncModeratorSubpageVisibility();
     loadModeratorQueueForApp();
     refreshOwnerPanel();
     return;
@@ -8137,15 +9245,298 @@ function renderAppContent(appId, mode = 'normal') {
   }
 
   if (appId === 'localnews') {
-    body.innerHTML = `
-      <div class="news-card">
-        <div class="news-list">
-          <article class="news-item"><strong>Regional vote turns</strong><span>Coalition momentum grows across the capital district.</span></article>
-          <article class="news-item"><strong>Private donors mobilize</strong><span>Funding circuits reopened after last week’s scandal.</span></article>
-          <article class="news-item"><strong>Public safety review</strong><span>Officials promise tighter control over transit corridors.</span></article>
+    const localNewsCategories = ['Latest', 'Politics', 'Economy', 'Business', 'Society', 'Opinion'];
+    const todaysDate = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(new Date());
+
+    const renderLocalNewsShell = () => {
+      const selectedArticle = localNewsState.articles.find((article) => article.id === localNewsState.activeArticleId) || null;
+
+      if (localNewsState.loading) {
+        body.innerHTML = `
+          <div class="localnews-page">
+            <div class="news-card localnews-shell">
+              <div class="moneytree-empty-state"><strong>Loading the latest updates…</strong><p>Checking the newsroom for the newest published coverage.</p></div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (localNewsState.error) {
+        body.innerHTML = `
+          <div class="localnews-page">
+            <div class="news-card localnews-shell">
+              <div class="moneytree-empty-state"><strong>Local News is unavailable.</strong><p>${escapeHtml(localNewsState.error)}</p></div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (!localNewsState.articles.length) {
+        body.innerHTML = `
+          <div class="localnews-page">
+            <header class="localnews-masthead">
+              <div class="localnews-topline">
+                <span>Edition</span>
+                <span>${escapeHtml(todaysDate)}</span>
+              </div>
+              <div class="localnews-brandbar">
+                <div class="localnews-brand">
+                  <span class="brand-mark">TYRANNY</span>
+                  <span class="brand-sub">DAILY</span>
+                </div>
+                <div class="localnews-date-pill">${escapeHtml(todaysDate)}</div>
+              </div>
+              <nav class="localnews-nav" aria-label="News categories">
+                ${localNewsCategories.map((category) => `
+                  <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
+                `).join('')}
+              </nav>
+            </header>
+            <div class="news-card localnews-shell">
+              <div class="moneytree-empty-state"><strong>No published coverage yet.</strong><p>The newsroom has not published any stories.</p></div>
+            </div>
+          </div>
+        `;
+
+        body.querySelector('[data-action="localnews-refresh"]')?.addEventListener('click', async () => {
+          await loadLocalNewsArticles();
+        });
+
+        body.querySelectorAll('[data-action="localnews-category"]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const category = button.getAttribute('data-category');
+            if (!category) {
+              return;
+            }
+            localNewsState.activeCategory = category;
+            renderLocalNewsShell();
+          });
+        });
+        return;
+      }
+
+      const leadArticle = localNewsState.articles[0] || null;
+      const secondaryArticles = localNewsState.articles.slice(1, 4);
+      const latestArticles = localNewsState.articles.slice(0, 6);
+
+      if (localNewsState.detailOpen && selectedArticle) {
+        body.innerHTML = `
+          <div class="localnews-page">
+            <header class="localnews-masthead">
+              <div class="localnews-topline">
+                <span>Edition</span>
+                <span>${escapeHtml(todaysDate)}</span>
+              </div>
+              <div class="localnews-brandbar">
+                <div class="localnews-brand">
+                  <span class="brand-mark">TYRANNY</span>
+                  <span class="brand-sub">DAILY</span>
+                </div>
+                <div class="localnews-date-pill">${escapeHtml(todaysDate)}</div>
+              </div>
+              <nav class="localnews-nav" aria-label="News categories">
+                ${localNewsCategories.map((category) => `
+                  <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
+                `).join('')}
+              </nav>
+            </header>
+
+            <div class="news-card localnews-shell">
+              <div class="localnews-article-reading">
+                <button type="button" class="localnews-back-link" data-action="localnews-close-article">← Back to latest</button>
+                <article class="localnews-reading-article">
+                  <div class="localnews-reading-kicker">${escapeHtml(localNewsState.activeCategory || 'Latest')} • Local News</div>
+                  <h1 class="localnews-reading-headline">${escapeHtml(selectedArticle.headline || 'Untitled article')}</h1>
+                  ${selectedArticle.excerpt ? `<p class="localnews-reading-summary">${escapeHtml(selectedArticle.excerpt)}</p>` : ''}
+                  <div class="localnews-reading-meta">
+                    <span>By Tyranny Daily</span>
+                    <span>•</span>
+                    <span>${escapeHtml(formatNewsDate(selectedArticle.published_at || selectedArticle.created_at))}</span>
+                  </div>
+                  <div class="localnews-content">${sanitizeRichTextHtml(selectedArticle.content_html || '<p>No article content is available.</p>')}</div>
+                </article>
+              </div>
+            </div>
+          </div>
+        `;
+
+        body.querySelector('[data-action="localnews-close-article"]')?.addEventListener('click', () => {
+          localNewsState.detailOpen = false;
+          renderLocalNewsShell();
+        });
+
+        body.querySelectorAll('[data-action="localnews-category"]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const category = button.getAttribute('data-category');
+            if (!category) {
+              return;
+            }
+            localNewsState.activeCategory = category;
+            renderLocalNewsShell();
+          });
+        });
+
+        return;
+      }
+
+      body.innerHTML = `
+        <div class="localnews-page">
+          <header class="localnews-masthead">
+            <div class="localnews-topline">
+              <span>Edition</span>
+              <span>${escapeHtml(todaysDate)}</span>
+            </div>
+            <div class="localnews-brandbar">
+              <div class="localnews-brand">
+                <span class="brand-mark">TYRANNY</span>
+                <span class="brand-sub">DAILY</span>
+              </div>
+              <div class="localnews-date-pill">${escapeHtml(todaysDate)}</div>
+            </div>
+            <nav class="localnews-nav" aria-label="News categories">
+              ${localNewsCategories.map((category) => `
+                <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
+              `).join('')}
+            </nav>
+          </header>
+
+          <main class="localnews-homepage">
+            <section class="localnews-featured-story">
+              ${leadArticle ? `
+                <button type="button" class="localnews-story-lead" data-action="localnews-open-article" data-article-id="${escapeHtml(leadArticle.id || '')}">
+                  <div class="localnews-featured-copy">
+                    <div class="localnews-story-kicker">Lead Story</div>
+                    <h1>${escapeHtml(leadArticle.headline || 'Untitled article')}</h1>
+                    <p>${escapeHtml(leadArticle.excerpt || 'No summary available.')}</p>
+                    <div class="localnews-story-meta">
+                      <span>By Tyranny Daily</span>
+                      <span>${escapeHtml(formatNewsDate(leadArticle.published_at || leadArticle.created_at))}</span>
+                    </div>
+                  </div>
+                </button>
+              ` : '<div class="moneytree-empty-state"><strong>No story available.</strong><p>Check back soon for the next briefing.</p></div>'}
+            </section>
+
+            <section class="localnews-secondary-stories">
+              ${secondaryArticles.map((article) => `
+                <button type="button" class="localnews-story-card" data-action="localnews-open-article" data-article-id="${escapeHtml(article.id || '')}">
+                  <div class="localnews-card-copy">
+                    <div class="localnews-story-kicker">${escapeHtml(localNewsState.activeCategory || 'Latest')}</div>
+                    <h2>${escapeHtml(article.headline || 'Untitled article')}</h2>
+                    <p>${escapeHtml(article.excerpt || 'No summary available.')}</p>
+                    <span>${escapeHtml(formatNewsDate(article.published_at || article.created_at))}</span>
+                  </div>
+                </button>
+              `).join('')}
+            </section>
+
+            <section class="localnews-latest-section">
+              <div class="localnews-section-header">
+                <span>Latest News</span>
+                <button type="button" class="secondary-button localnews-refresh-button" data-action="localnews-refresh">Refresh</button>
+              </div>
+
+              <div class="localnews-feed-list">
+                ${latestArticles.map((article) => `
+                  <button type="button" class="localnews-feed-item" data-action="localnews-open-article" data-article-id="${escapeHtml(article.id || '')}">
+                    <div class="localnews-feed-copy">
+                      <span class="localnews-feed-date">${escapeHtml(formatNewsDate(article.published_at || article.created_at))}</span>
+                      <h3>${escapeHtml(article.headline || 'Untitled article')}</h3>
+                      <p>${escapeHtml(article.excerpt || 'No summary available.')}</p>
+                    </div>
+                  </button>
+                `).join('')}
+              </div>
+            </section>
+          </main>
         </div>
-      </div>
-    `;
+      `;
+
+      body.querySelector('[data-action="localnews-refresh"]')?.addEventListener('click', async () => {
+        await loadLocalNewsArticles();
+      });
+
+      body.querySelectorAll('[data-action="localnews-open-article"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const articleId = button.getAttribute('data-article-id');
+          if (!articleId) {
+            return;
+          }
+          localNewsState.activeArticleId = articleId;
+          localNewsState.detailOpen = true;
+          renderLocalNewsShell();
+        });
+      });
+
+      body.querySelectorAll('[data-action="localnews-category"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const category = button.getAttribute('data-category');
+          if (!category) {
+            return;
+          }
+          localNewsState.activeCategory = category;
+          renderLocalNewsShell();
+        });
+      });
+    };
+
+    const loadLocalNewsArticles = async () => {
+      const supabase = getAuthClient();
+      localNewsState.loading = true;
+      localNewsState.error = null;
+      renderLocalNewsShell();
+
+      try {
+        if (!supabase) {
+          throw new Error('Authentication unavailable.');
+        }
+
+        const { data, error } = await supabase.rpc('get_published_news_articles');
+        if (error) {
+          throw error;
+        }
+
+        const rawArticles = Array.isArray(data)
+          ? data.map((article) => ({
+              id: article?.id ?? article?.article_id ?? null,
+              headline: article?.headline ?? 'Untitled article',
+              excerpt: article?.excerpt ?? '',
+              featured_image_url: article?.featured_image_url ?? '',
+              content_html: article?.content_html ?? '',
+              created_at: article?.created_at ?? null,
+              published_at: article?.published_at ?? article?.created_at ?? null,
+              slug: article?.slug ?? '',
+            })).filter((article) => article.id)
+          : [];
+
+        localNewsState.articles = await Promise.all(rawArticles.map((article) => resolveLocalNewsArticleForDisplay(article, supabase)));
+
+        if (!localNewsState.activeArticleId || !localNewsState.articles.some((article) => article.id === localNewsState.activeArticleId)) {
+          localNewsState.activeArticleId = localNewsState.articles[0]?.id || null;
+        }
+      } catch (error) {
+        console.error('Local News load failed:', error);
+        localNewsState.articles = [];
+        localNewsState.activeArticleId = null;
+        localNewsState.error = error?.message || 'Unable to load the latest local news updates.';
+      } finally {
+        localNewsState.loading = false;
+        renderLocalNewsShell();
+      }
+    };
+
+    renderLocalNewsShell();
+    if (!localNewsState.articles.length && !localNewsState.loading) {
+      loadLocalNewsArticles();
+    }
+    return;
   }
 
   if (appId === 'voting') {
