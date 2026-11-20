@@ -62,6 +62,12 @@ const appCatalog = {
     color: '#ff9f7d',
     unread: 0,
   },
+  lucky7: {
+    name: 'LUCKY 7',
+    icon: './assets/lucky 7/background/icon.jpg',
+    color: '#ffdd57',
+    unread: 0,
+  },
   localnews: {
     name: 'Local News',
     icon: './images/icons/Localnews.PNG',
@@ -223,6 +229,36 @@ const storeState = {
   purchaseRequestProductId: null,
   purchaseRequestKey: null,
 };
+const lucky7State = {
+  selectedGame: 'slots',
+  wager: 5,
+  baccaratSelection: 'player',
+  rouletteSelectedChip: 5,
+  rouletteSelections: {
+    color: null,
+    parity: null,
+    range: null,
+  },
+  previousRouletteSelections: {
+    color: null,
+    parity: null,
+    range: null,
+  },
+  isBusy: false,
+  slotsAnimating: false,
+  slotsCelebrating: false,
+  error: null,
+  lastResult: null,
+  history: [],
+  stats: {
+    total_bet: 0,
+    total_win: 0,
+    net_profit: 0,
+  },
+  historyLoading: false,
+  historyError: null,
+};
+const lucky7BetDenominations = [1, 2, 3, 4, 5, 10, 15, 20, 50];
 let activeAppId = null;
 let lockVisible = true;
 
@@ -234,6 +270,14 @@ const moderatorAppState = {
   message: null,
   processingIds: [],
   requestToken: 0,
+  ownerAccess: false,
+  ownerLoading: false,
+  ownerMessage: null,
+  ownerError: null,
+  ownerTargetCitizenId: '',
+  ownerAmount: '',
+  ownerReason: '',
+  ownerSubmitting: false,
 };
 
 const appLayer = document.getElementById('app-layer');
@@ -3441,6 +3485,11 @@ function renderPlayerDetails() {
   if (homeBalance) {
     homeBalance.textContent = player.balance;
   }
+
+  const lucky7Body = document.querySelector('#app-lucky7 .app-body');
+  if (lucky7Body && typeof renderLucky7App === 'function') {
+    renderLucky7App();
+  }
 }
 
 function renderAppGrid() {
@@ -3568,6 +3617,7 @@ function ensureAppWindow(appId) {
     appWindow.id = `app-${appId}`;
     appWindow.className = 'app-window';
     appWindow.setAttribute('aria-label', `${appCatalog[appId].name} app`);
+
     const icon = appCatalog[appId].icon;
     const miniMark = icon.startsWith('.')
       ? `<span class="mini-mark-image" style="background-image: url('${icon}'); background-size: cover; background-position: center; background-repeat: no-repeat;"></span>`
@@ -4504,6 +4554,866 @@ async function loadStoreCatalog() {
   }
 }
 
+function formatLucky7Currency(value) {
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[^0-9.-]/g, '');
+    if (!cleaned || cleaned === '-' || cleaned === '.') {
+      return '$0';
+    }
+    value = Number(cleaned);
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '$0';
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(numeric);
+}
+
+function getRouletteCategoryConfig() {
+  return {
+    color: {
+      label: 'Color',
+      options: ['red', 'black'],
+    },
+    parity: {
+      label: 'Number type',
+      options: ['odd', 'even'],
+    },
+    range: {
+      label: 'Number range',
+      options: ['low', 'high'],
+    },
+  };
+}
+
+function normalizeRouletteBetType(type) {
+  return String(type || '').trim().toLowerCase();
+}
+
+function getRouletteSelectionLabel(type) {
+  const normalized = normalizeRouletteBetType(type);
+  if (normalized === 'low') {
+    return 'LOW (1–18)';
+  }
+  if (normalized === 'high') {
+    return 'HIGH (19–36)';
+  }
+  if (normalized === 'odd') {
+    return 'ODD';
+  }
+  if (normalized === 'even') {
+    return 'EVEN';
+  }
+  return normalized ? normalized.toUpperCase() : 'BET';
+}
+
+function cloneRouletteSelections(selections) {
+  const next = {};
+  Object.keys(getRouletteCategoryConfig()).forEach((category) => {
+    const current = selections && selections[category];
+    if (current && current.type && Number(current.wager || 0) > 0) {
+      next[category] = {
+        type: normalizeRouletteBetType(current.type),
+        wager: Number(current.wager || 0),
+      };
+    } else {
+      next[category] = null;
+    }
+  });
+  return next;
+}
+
+function getRouletteSelectedBets(selections = lucky7State.rouletteSelections) {
+  return Object.entries(getRouletteCategoryConfig())
+    .map(([category, config]) => {
+      const selection = selections && selections[category];
+      const type = selection && selection.type ? normalizeRouletteBetType(selection.type) : '';
+      const wager = Number(selection?.wager ?? 0);
+      if (!type || !Number.isFinite(wager) || wager <= 0) {
+        return null;
+      }
+      return {
+        category,
+        label: config.label,
+        type,
+        wager,
+      };
+    })
+    .filter(Boolean);
+}
+
+function getRouletteSelectedTotal(selections = lucky7State.rouletteSelections) {
+  return getRouletteSelectedBets(selections).reduce((total, bet) => total + Number(bet.wager || 0), 0);
+}
+
+async function loadLucky7History() {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+
+  lucky7State.historyLoading = true;
+  lucky7State.historyError = null;
+
+  if (!supabase || !session?.user) {
+    lucky7State.history = [];
+    lucky7State.historyLoading = false;
+    lucky7State.historyError = 'Your session has expired. Please sign in again.';
+    return [];
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke('lucky7-history', {
+      method: 'GET',
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.transactions)
+        ? data.transactions
+        : [];
+
+    const rawStats = data && typeof data === 'object' && 'stats' in data ? data.stats : {};
+    const totalBet = Number(rawStats?.total_bet ?? rawStats?.totalBet ?? 0);
+    const totalWin = Number(rawStats?.total_win ?? rawStats?.totalWin ?? 0);
+    const netProfit = Number(rawStats?.net_profit ?? rawStats?.netProfit ?? (Number.isFinite(totalWin) && Number.isFinite(totalBet) ? totalWin - totalBet : 0));
+
+    lucky7State.history = rows.map((entry) => ({
+      id: entry?.id ?? null,
+      game_type: entry?.game_type ?? 'slots',
+      wager: Number(entry?.wager ?? 0),
+      payout: Number(entry?.payout ?? 0),
+      net_change: Number(entry?.net_change ?? 0),
+      status: entry?.status ?? 'posted',
+      created_at: entry?.created_at ?? null,
+      result: entry?.result ?? {},
+    }));
+    lucky7State.stats = {
+      total_bet: Number.isFinite(totalBet) ? totalBet : 0,
+      total_win: Number.isFinite(totalWin) ? totalWin : 0,
+      net_profit: Number.isFinite(netProfit) ? netProfit : 0,
+    };
+    lucky7State.historyError = null;
+    return lucky7State.history;
+  } catch (error) {
+    console.error('LUCKY 7 history load failed:', error);
+    lucky7State.history = [];
+    lucky7State.historyError = error?.message || 'Unable to load LUCKY 7 history right now.';
+    return [];
+  } finally {
+    lucky7State.historyLoading = false;
+  }
+}
+
+async function playLucky7Round() {
+  if (lucky7State.isBusy) {
+    return;
+  }
+
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+
+  if (!supabase || !session?.user) {
+    lucky7State.error = 'Your session has expired. Please sign in again.';
+    renderLucky7App();
+    return;
+  }
+
+  const isRoulette = lucky7State.selectedGame === 'roulette';
+  const isBaccarat = lucky7State.selectedGame === 'baccarat';
+  const roundWager = isRoulette ? getRouletteSelectedTotal() : Number(lucky7State.wager);
+
+  if (!Number.isFinite(roundWager) || roundWager <= 0) {
+    lucky7State.error = isRoulette
+      ? 'Add at least one roulette bet before spinning.'
+      : 'Select a valid wager before playing.';
+    renderLucky7App();
+    return;
+  }
+
+  if (roundWager < 1 || roundWager > 500) {
+    lucky7State.error = 'Wagers must be between $1 and $500.';
+    renderLucky7App();
+    return;
+  }
+
+  if (isRoulette && getRouletteSelectedBets().length === 0) {
+    lucky7State.error = 'Add one or more roulette bets to the slip.';
+    renderLucky7App();
+    return;
+  }
+
+  if (isBaccarat && !['player', 'banker', 'tie'].includes(lucky7State.baccaratSelection)) {
+    lucky7State.error = 'Choose Player, Banker, or Tie before dealing.';
+    renderLucky7App();
+    return;
+  }
+
+  lucky7State.isBusy = true;
+  lucky7State.lastResult = null;
+  lucky7State.slotsAnimating = lucky7State.selectedGame === 'slots';
+  lucky7State.slotsCelebrating = false;
+  lucky7State.error = null;
+  renderLucky7App();
+
+  try {
+    const previousRouletteSnapshot = isRoulette ? cloneRouletteSelections(lucky7State.rouletteSelections) : null;
+    const payload = {
+      game_type: lucky7State.selectedGame,
+      wager: roundWager,
+      payload: isRoulette
+        ? {
+            bets: getRouletteSelectedBets().map((bet) => ({
+              type: normalizeRouletteBetType(bet.type),
+              wager: Number(bet.wager || 0),
+            })),
+          }
+        : isBaccarat
+          ? {
+              bet: lucky7State.baccaratSelection,
+            }
+          : {},
+    };
+
+    const { data, error } = await supabase.functions.invoke('lucky7-play', {
+      body: payload,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const normalizeLucky7Response = (response) => {
+      if (Array.isArray(response)) {
+        return response[0] || null;
+      }
+
+      if (response && typeof response === 'object' && 'transaction' in response) {
+        return response.transaction || null;
+      }
+
+      return response || null;
+    };
+
+    const result = normalizeLucky7Response(data);
+    const slotReelValues = lucky7State.selectedGame === 'slots'
+      ? (() => {
+          const reels = Array.isArray(result?.result?.reels) ? result.result.reels.slice(0, 3) : [];
+          const parsed = reels.map((value) => Number(value));
+          const isValid = parsed.length === 3 && parsed.every((value) => Number.isInteger(value) && value >= 0 && value <= 9);
+          return isValid ? parsed : null;
+        })()
+      : null;
+
+    if (lucky7State.selectedGame === 'slots' && !slotReelValues) {
+      lucky7State.lastResult = null;
+      lucky7State.error = 'The casino returned an invalid slot result. Please try again.';
+      lucky7State.slotsAnimating = false;
+      lucky7State.slotsCelebrating = false;
+      renderLucky7App();
+      return;
+    }
+
+    lucky7State.lastResult = result || null;
+    lucky7State.error = null;
+    lucky7State.slotsAnimating = false;
+    lucky7State.slotsCelebrating = Boolean(
+      lucky7State.selectedGame === 'slots'
+      && result?.result
+      && typeof result.result === 'object'
+      && result.result.summary
+      && result.result.summary !== 'No match'
+      && result.result.summary !== 'Missed bet'
+    );
+    if (isRoulette) {
+      lucky7State.previousRouletteSelections = previousRouletteSnapshot || cloneRouletteSelections(lucky7State.rouletteSelections);
+      lucky7State.rouletteSelections = {
+        color: null,
+        parity: null,
+        range: null,
+      };
+    }
+    await loadCitizenProfile();
+    await loadLucky7History();
+    renderLucky7App();
+
+    if (lucky7State.slotsCelebrating) {
+      window.setTimeout(() => {
+        lucky7State.slotsCelebrating = false;
+        renderLucky7App();
+      }, 1100);
+    }
+  } catch (error) {
+    const responseContext = error?.context;
+    if (responseContext instanceof Response) {
+      const responseBody = await responseContext.clone().text();
+      console.error('LUCKY 7 play failed: HTTP error', {
+        status: responseContext.status,
+        statusText: responseContext.statusText,
+        body: responseBody,
+        error,
+      });
+    } else {
+      console.error('LUCKY 7 play failed:', error);
+    }
+    lucky7State.slotsAnimating = false;
+    lucky7State.slotsCelebrating = false;
+    lucky7State.error = error?.message || 'The casino could not process your turn.';
+    renderLucky7App();
+  } finally {
+    lucky7State.isBusy = false;
+    lucky7State.slotsAnimating = false;
+    renderLucky7App();
+  }
+}
+
+function renderLucky7App() {
+  const body = document.querySelector('#app-lucky7 .app-body');
+  if (!body) {
+    return;
+  }
+
+  const gameConfig = {
+    slots: {
+      name: 'Slots',
+      description: 'Three reels. Match the machine to trigger the big payout.',
+      accent: '#ffdd57',
+      accentDark: '#d4a500',
+    },
+    roulette: {
+      name: 'Roulette',
+      description: 'Text roulette for the beta: combine red, black, odd, even, low, and high bets in one spin.',
+      accent: '#ff7a66',
+      accentDark: '#d95b3d',
+    },
+    baccarat: {
+      name: 'Baccarat',
+      description: 'Bet on Player, Banker, or Tie in a standard Punto Banco round.',
+      accent: '#7ee7c8',
+      accentDark: '#2fb58d',
+    },
+  };
+
+  const selectedGame = gameConfig[lucky7State.selectedGame] || gameConfig.slots;
+  const lastResult = lucky7State.lastResult;
+  const historyRows = lucky7State.history.length
+    ? lucky7State.history.slice(0, 6).map((entry) => {
+        const label = `${entry.game_type.toUpperCase()} • ${formatLucky7Currency(entry.wager)}`;
+        const delta = entry.net_change >= 0 ? `+${formatLucky7Currency(entry.net_change)}` : formatLucky7Currency(entry.net_change);
+        const meta = entry.result && typeof entry.result === 'object' && entry.result?.summary ? entry.result.summary : 'Round complete';
+        return `
+          <div class="lucky7-history-row">
+            <div>
+              <strong>${escapeHtml(label)}</strong>
+              <small>${escapeHtml(meta)}</small>
+            </div>
+            <span class="${entry.net_change >= 0 ? 'positive' : 'negative'}">${escapeHtml(delta)}</span>
+          </div>
+        `;
+      }).join('')
+    : '<div class="lucky7-empty-state"><strong>No rounds yet.</strong><p>Win a few spins to fill the ledger.</p></div>';
+
+  const lucky7SlotAssetMap = {
+    0: 'assets/lucky7/slots/new%20sprites/cherry.png',
+    1: 'assets/lucky7/slots/new%20sprites/lemon.png',
+    2: 'assets/lucky7/slots/new%20sprites/orange.png',
+    3: 'assets/lucky7/slots/new%20sprites/bell.png',
+    4: 'assets/lucky7/slots/new%20sprites/grapes.png',
+    5: 'assets/lucky7/slots/new%20sprites/watermelon.png',
+    6: 'assets/lucky7/slots/new%20sprites/bar.png',
+    7: 'assets/lucky7/slots/new%20sprites/lucky7.png',
+    8: 'assets/lucky7/slots/new%20sprites/bar2.png',
+    9: 'assets/lucky7/slots/new%20sprites/bar3.png',
+  };
+
+  const getLucky7SlotAsset = (value) => {
+    const numericValue = Number(value);
+    return lucky7SlotAssetMap[Number.isFinite(numericValue) ? numericValue : 0] || lucky7SlotAssetMap[0];
+  };
+
+  const slotSymbolCycle = [7, 9, 3, 8, 6, 1, 4, 2, 5, 0, 7, 9, 3, 8, 6, 1, 4, 2, 5, 0];
+  const slotFinalReels = Array.isArray(lastResult?.result?.reels)
+    ? lastResult.result.reels.slice(0, 3).map((item) => Number(item))
+    : null;
+  const hasValidSlotReels = Array.isArray(slotFinalReels)
+    && slotFinalReels.length === 3
+    && slotFinalReels.every((value) => Number.isInteger(value) && value >= 0 && value <= 9);
+
+  const slotReelsMarkup = [0, 1, 2].map((index) => {
+    if (!hasValidSlotReels) {
+      return `
+        <div class="lucky7-slot-reel">
+          <div class="lucky7-slot-window">
+            <div class="lucky7-slot-track is-stopped">
+              <div class="lucky7-slot-symbol is-final"><img src="${lucky7SlotAssetMap[0]}" alt="Slot result unavailable" /></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const finalValue = slotFinalReels[index];
+    const finalAsset = getLucky7SlotAsset(finalValue);
+    const reelTrack = lucky7State.slotsAnimating
+      ? [...slotSymbolCycle, ...slotSymbolCycle].map((symbolValue) => {
+          const assetPath = getLucky7SlotAsset(symbolValue);
+          return `<div class="lucky7-slot-symbol"><img src="${assetPath}" alt="Lucky 7 slot symbol" /></div>`;
+        }).join('')
+      : `<div class="lucky7-slot-symbol is-final"><img src="${finalAsset}" alt="Lucky 7 final symbol" /></div>`;
+
+    return `
+      <div class="lucky7-slot-reel">
+        <div class="lucky7-slot-window">
+          <div class="lucky7-slot-track ${lucky7State.slotsAnimating ? 'is-spinning' : 'is-stopped'}" style="--reel-duration:${(2.1 + index * 0.5).toFixed(2)}s; --reel-delay:${(0.2 + index * 0.18).toFixed(2)}s;">
+            ${reelTrack}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const rouletteCategoryConfig = getRouletteCategoryConfig();
+  const rouletteChipOptions = lucky7BetDenominations;
+  const rouletteSelectionRows = Object.entries(rouletteCategoryConfig).map(([category, config]) => {
+    const currentSelection = lucky7State.rouletteSelections[category];
+    const rowButtons = config.options.map((option) => {
+      const isSelected = currentSelection && currentSelection.type === option;
+      const displayLabel = getRouletteSelectionLabel(option);
+      return `
+        <button
+          type="button"
+          class="lucky7-roulette-option ${isSelected ? 'selected' : ''}"
+          data-lucky7-roulette-category="${category}"
+          data-lucky7-roulette-option="${option}"
+        >
+          <span>${escapeHtml(displayLabel)}</span>
+          <small>${isSelected ? formatLucky7Currency(Number(currentSelection.wager || 0)) : 'Select'}</small>
+        </button>
+      `;
+    }).join('');
+
+    return `
+      <div class="lucky7-roulette-row">
+        <div class="lucky7-roulette-label">${escapeHtml(config.label)}</div>
+        <div class="lucky7-roulette-option-row">
+          ${rowButtons}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const rouletteSelectedBets = getRouletteSelectedBets();
+  const rouletteTotalWager = getRouletteSelectedTotal();
+  const rouletteSlipRows = rouletteSelectedBets.length
+    ? rouletteSelectedBets.map((bet) => `
+      <div class="lucky7-slip-row">
+        <div>
+          <strong>${escapeHtml(getRouletteSelectionLabel(bet.type))}</strong>
+          <span>${formatLucky7Currency(Number(bet.wager || 0))}</span>
+        </div>
+        <div class="lucky7-slip-bet-controls">
+          <button type="button" class="lucky7-slip-bet-button" data-lucky7-adjust-bet="decrease" data-lucky7-adjust-category="${bet.category}">−</button>
+          <button type="button" class="lucky7-slip-bet-button" data-lucky7-adjust-bet="increase" data-lucky7-adjust-category="${bet.category}">+</button>
+        </div>
+      </div>
+    `).join('')
+    : '<div class="lucky7-empty-state"><strong>No bets yet.</strong><p>Select one option from any row to build a round.</p></div>';
+
+  const rouletteMarkup = lucky7State.selectedGame === 'roulette'
+    ? `
+      <div class="lucky7-roulette-editor">
+        <div class="lucky7-chip-row">
+          ${rouletteChipOptions.map((chip) => `
+            <button type="button" class="lucky7-chip ${Number(lucky7State.rouletteSelectedChip) === Number(chip) ? 'selected' : ''}" data-lucky7-chip="${chip}">${formatLucky7Currency(chip)}</button>
+          `).join('')}
+        </div>
+
+        <div class="lucky7-roulette-grid">
+          ${rouletteSelectionRows}
+        </div>
+
+        <div class="lucky7-slip-actions">
+          <button type="button" class="lucky7-secondary-button" data-lucky7-clear-bets>Clear bets</button>
+        </div>
+
+        <div class="lucky7-roulette-slip">
+          <div class="lucky7-slip-header">
+            <span>Betting slip</span>
+            <strong>${formatLucky7Currency(rouletteTotalWager)}</strong>
+          </div>
+          <div class="lucky7-slip-list">
+            ${rouletteSlipRows}
+          </div>
+          <div class="lucky7-slip-footer">
+            <span>Total wager</span>
+            <strong>${formatLucky7Currency(rouletteTotalWager)}</strong>
+          </div>
+          <div class="lucky7-slip-actions">
+            <button type="button" class="lucky7-secondary-button" data-lucky7-repeat-bets>Repeat previous</button>
+            <button type="button" class="lucky7-secondary-button" data-lucky7-double-bets>Double previous</button>
+          </div>
+        </div>
+      </div>
+    `
+    : '';
+
+  const slotsDisplayMarkup = lucky7State.selectedGame === 'slots'
+    ? `
+      <div class="lucky7-slot-machine ${lucky7State.slotsCelebrating ? 'celebrating' : ''}">
+        <div class="lucky7-slot-header">
+          <span>Spin</span>
+          <strong>${lucky7State.slotsAnimating ? 'Rolling…' : (lastResult?.result?.summary || 'Ready')}</strong>
+        </div>
+        <div class="lucky7-slot-reel-bank">
+          ${slotReelsMarkup}
+        </div>
+        <div class="lucky7-slot-summary">
+          <div>
+            <span>Wager</span>
+            <strong>${formatLucky7Currency(Number(lucky7State.wager) || 0)}</strong>
+          </div>
+          <div>
+            <span>Payout</span>
+            <strong>${formatLucky7Currency(Number(lastResult?.payout) || 0)}</strong>
+          </div>
+        </div>
+      </div>
+    `
+    : '';
+
+  const baccaratCardAssetBase = 'assets/lucky%207/baccarat/PNG/Cards%20(large)';
+  const baccaratBackAsset = `${baccaratCardAssetBase}/card_back.png`;
+  const getBaccaratCardAsset = (card) => {
+    if (!card || typeof card !== 'object') {
+      return baccaratBackAsset;
+    }
+    const suit = typeof card.suit === 'string' ? card.suit.trim().toLowerCase() : 'hearts';
+    const rank = typeof card.rank === 'string' ? card.rank.trim() : String(card.rank ?? 'A');
+    const normalizedSuit = suit === 'diamonds' || suit === 'hearts' || suit === 'clubs' || suit === 'spades' ? suit : 'hearts';
+    const normalizedRank = rank === '1' ? 'A' : rank === '11' ? 'J' : rank === '12' ? 'Q' : rank === '13' ? 'K' : rank === '10' ? '10' : rank.length === 1 && Number.isFinite(Number(rank)) ? String(rank).padStart(2, '0') : rank.toUpperCase();
+    return `${baccaratCardAssetBase}/card_${normalizedSuit}_${normalizedRank}.png`;
+  };
+
+  const baccaratBetKeys = ['player', 'banker', 'tie'];
+  const baccaratCardMarkup = (hand, reveal = true) => {
+    const cards = Array.isArray(hand) ? hand.filter((card) => card !== null && card !== undefined) : [];
+    if (!cards.length && reveal) {
+      return '<div class="lucky7-baccarat-empty">No cards dealt.</div>';
+    }
+    const visibleCards = cards.length ? cards : [null, null];
+    return visibleCards.map((card, index) => {
+      const safeCard = reveal && card ? card : { suit: 'back', rank: 'back' };
+      const imageSrc = reveal && card ? getBaccaratCardAsset(card) : baccaratBackAsset;
+      const alt = reveal && card ? `${card.rank || ''} of ${card.suit || ''}` : 'Hidden baccarat card';
+      return `<img class="lucky7-baccarat-card ${reveal && card ? 'revealed' : 'hidden'}" src="${imageSrc}" alt="${escapeHtml(alt)}" style="animation-delay:${index * 90}ms;" />`;
+    }).join('');
+  };
+
+  const baccaratRoundResult = lastResult && lucky7State.selectedGame === 'baccarat' ? lastResult.result || {} : null;
+  const baccaratPlayerHand = Array.isArray(baccaratRoundResult?.player_cards) ? baccaratRoundResult.player_cards : [];
+  const baccaratBankerHand = Array.isArray(baccaratRoundResult?.banker_cards) ? baccaratRoundResult.banker_cards : [];
+  const baccaratMarkup = lucky7State.selectedGame === 'baccarat' ? `
+    <div class="lucky7-baccarat-bet-row">
+      ${baccaratBetKeys.map((bet) => `
+        <button type="button" class="lucky7-baccarat-bet ${lucky7State.baccaratSelection === bet ? 'selected' : ''}" data-lucky7-baccarat-bet="${bet}">${bet === 'player' ? 'Player' : bet === 'banker' ? 'Banker' : 'Tie'}</button>
+      `).join('')}
+    </div>
+    <div class="lucky7-baccarat-table">
+      <div class="lucky7-baccarat-hand">
+        <div class="lucky7-baccarat-label">Player</div>
+        <div class="lucky7-baccarat-cards">
+          ${baccaratCardMarkup(baccaratPlayerHand.length ? baccaratPlayerHand : [null, null], Boolean(baccaratPlayerHand.length))}
+        </div>
+        <div class="lucky7-baccarat-total">Total: <strong>${Number(baccaratRoundResult?.player_total ?? 0)}</strong></div>
+      </div>
+      <div class="lucky7-baccarat-hand">
+        <div class="lucky7-baccarat-label">Banker</div>
+        <div class="lucky7-baccarat-cards">
+          ${baccaratCardMarkup(baccaratBankerHand.length ? baccaratBankerHand : [null, null], Boolean(baccaratBankerHand.length))}
+        </div>
+        <div class="lucky7-baccarat-total">Total: <strong>${Number(baccaratRoundResult?.banker_total ?? 0)}</strong></div>
+      </div>
+    </div>
+  ` : '';
+
+  const gameContentMarkup = [
+    lucky7State.selectedGame !== 'roulette' ? `
+      <div class="lucky7-wager-row">
+        ${lucky7BetDenominations.map((amount) => `
+          <button type="button" class="lucky7-wager ${Number(lucky7State.wager) === Number(amount) ? 'selected' : ''}" data-lucky7-wager="${amount}">${formatLucky7Currency(amount)}</button>
+        `).join('')}
+      </div>
+    ` : '',
+    slotsDisplayMarkup,
+    rouletteMarkup,
+    baccaratMarkup,
+  ].filter(Boolean).join('');
+
+  const rouletteResultBetMarkup = lucky7State.selectedGame === 'roulette' && Array.isArray(lastResult?.result?.bets)
+    ? lastResult.result.bets.map((bet) => `
+        <div class="lucky7-bet-result-row ${bet.won ? 'win' : 'loss'}">
+          <div>
+            <strong>${escapeHtml(getRouletteSelectionLabel(bet.type || bet.label || 'Bet'))}</strong>
+            <span>${escapeHtml(bet.won ? 'Win' : 'Loss')}</span>
+          </div>
+          <div class="lucky7-bet-result-amount">
+            <span>${formatLucky7Currency(Number(bet.wager || 0))}</span>
+            <strong>${formatLucky7Currency(Number(bet.payout || 0))}</strong>
+          </div>
+        </div>
+      `).join('')
+    : '';
+
+  const resultBoxMarkup = lucky7State.selectedGame !== 'slots'
+    ? (lastResult
+      ? (lucky7State.selectedGame === 'roulette'
+        ? `
+          <div class="lucky7-result-panel">
+            <div class="lucky7-result-header">
+              <span>Roulette</span>
+              <strong>${escapeHtml(lastResult.result?.summary || 'Round complete')}</strong>
+            </div>
+            <div class="lucky7-roulette-result-card">
+              <div class="lucky7-roulette-number">${Number(lastResult.result?.spin ?? 0)}</div>
+              <div class="lucky7-roulette-meta">
+                <div><span>Color</span><strong>${escapeHtml(lastResult.result?.color || 'GREEN')}</strong></div>
+                <div><span>Parity</span><strong>${escapeHtml(lastResult.result?.is_even ? 'EVEN' : lastResult.result?.is_odd ? 'ODD' : 'GREEN')}</strong></div>
+                <div><span>Range</span><strong>${escapeHtml(lastResult.result?.is_low ? 'LOW (1–18)' : lastResult.result?.is_high ? 'HIGH (19–36)' : 'GREEN')}</strong></div>
+              </div>
+            </div>
+            <div class="lucky7-result-grid">
+              <div><span>Wager</span><strong>${formatLucky7Currency(Number(lastResult.wager || lucky7State.wager))}</strong></div>
+              <div><span>Payout</span><strong>${formatLucky7Currency(Number(lastResult.payout || lastResult.result?.total_payout || 0))}</strong></div>
+              <div><span>Net</span><strong>${formatLucky7Currency(Number(lastResult.net_change || 0))}</strong></div>
+              <div><span>Balance</span><strong>${formatLucky7Currency(Number(lastResult.balance_after || player.balance))}</strong></div>
+            </div>
+            <div class="lucky7-slot-summary">
+              <div>
+                <span>Each bet</span>
+                <strong>${Array.isArray(lastResult.result?.bets) ? lastResult.result.bets.length : 0}</strong>
+              </div>
+              <div>
+                <span>Total payout</span>
+                <strong>${formatLucky7Currency(Number(lastResult.result?.total_payout || 0))}</strong>
+              </div>
+            </div>
+            <div class="lucky7-bet-result-list">
+              ${rouletteResultBetMarkup || '<div class="lucky7-empty-state"><strong>No bet outcomes.</strong><p>The round result is displayed above.</p></div>'}
+            </div>
+          </div>
+        `
+        : lucky7State.selectedGame === 'baccarat'
+          ? `
+            <div class="lucky7-result-panel">
+              <div class="lucky7-result-header">
+                <span>Baccarat</span>
+                <strong>${escapeHtml(lastResult.result?.summary || 'Round complete')}</strong>
+              </div>
+              <div class="lucky7-result-grid">
+                <div><span>Bet</span><strong>${escapeHtml((lastResult.result?.bet || lucky7State.baccaratSelection || 'Player').toString().replace(/\b\w/g, (char) => char.toUpperCase()))}</strong></div>
+                <div><span>Winner</span><strong>${escapeHtml((lastResult.result?.winner || 'player').toString().replace(/\b\w/g, (char) => char.toUpperCase()))}</strong></div>
+                <div><span>Wager</span><strong>${formatLucky7Currency(Number(lastResult.wager || lucky7State.wager))}</strong></div>
+                <div><span>Payout</span><strong>${formatLucky7Currency(Number(lastResult.payout || 0))}</strong></div>
+                <div><span>Net</span><strong>${formatLucky7Currency(Number(lastResult.net_change || 0))}</strong></div>
+                <div><span>Balance</span><strong>${formatLucky7Currency(Number(lastResult.balance_after || player.balance))}</strong></div>
+              </div>
+            </div>
+          `
+          : `
+            <div class="lucky7-result-panel">
+              <div class="lucky7-result-header">
+                <span>${escapeHtml(lastResult.game_type || selectedGame.name)}</span>
+                <strong>${escapeHtml(lastResult.result?.summary || 'Round complete')}</strong>
+              </div>
+              <div class="lucky7-result-grid">
+                <div><span>Wager</span><strong>${formatLucky7Currency(Number(lastResult.wager || lucky7State.wager))}</strong></div>
+                <div><span>Payout</span><strong>${formatLucky7Currency(Number(lastResult.payout || 0))}</strong></div>
+                <div><span>Net</span><strong>${formatLucky7Currency(Number(lastResult.net_change || 0))}</strong></div>
+                <div><span>Balance</span><strong>${formatLucky7Currency(Number(lastResult.balance_after || player.balance))}</strong></div>
+              </div>
+            </div>
+          `)
+      : '<div class="lucky7-empty-state"><strong>Ready to play.</strong><p>Choose a wager and spin to see the round result.</p></div>')
+    : '';
+
+  body.innerHTML = `
+    <div class="lucky7-shell">
+      <div class="lucky7-tabs">
+        ${['slots', 'roulette', 'baccarat'].map((gameId) => `
+          <button type="button" class="lucky7-tab ${lucky7State.selectedGame === gameId ? 'selected' : ''}" data-lucky7-game="${gameId}">${escapeHtml(gameConfig[gameId].name)}</button>
+        `).join('')}
+      </div>
+
+      <div class="lucky7-panel">
+        <div class="lucky7-panel-head">
+          <div>
+            <h4>${escapeHtml(selectedGame.name)}</h4>
+          </div>
+        </div>
+
+        <div class="lucky7-panel-body">
+          ${gameContentMarkup}
+
+          <div class="lucky7-control-row">
+            <button type="button" class="lucky7-play-button" data-lucky7-play ${lucky7State.isBusy ? 'disabled' : ''}>
+              ${lucky7State.isBusy ? 'Processing…' : 'Play now'}
+            </button>
+            <div class="lucky7-inline-balance">Current balance: <strong>${formatLucky7Currency(profileState.private?.balance ?? 0)}</strong></div>
+          </div>
+
+          ${resultBoxMarkup}
+          ${lucky7State.error ? `<div class="lucky7-alert error">${escapeHtml(lucky7State.error)}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+
+  body.querySelectorAll('[data-lucky7-game]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextGame = button.dataset.lucky7Game;
+      if (!nextGame) {
+        return;
+      }
+      lucky7State.selectedGame = nextGame;
+      renderLucky7App();
+    });
+  });
+
+  body.querySelectorAll('[data-lucky7-wager]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const value = Number(button.dataset.lucky7Wager || 0);
+      if (!Number.isFinite(value)) {
+        return;
+      }
+      lucky7State.wager = value;
+      renderLucky7App();
+    });
+  });
+
+  body.querySelectorAll('[data-lucky7-baccarat-bet]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextChoice = button.dataset.lucky7BaccaratBet;
+      if (!nextChoice) {
+        return;
+      }
+      lucky7State.baccaratSelection = nextChoice;
+      renderLucky7App();
+    });
+  });
+
+  body.querySelectorAll('[data-lucky7-roulette-option]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const category = button.dataset.lucky7RouletteCategory;
+      const option = button.dataset.lucky7RouletteOption;
+      if (!category || !option) {
+        return;
+      }
+
+      const previous = lucky7State.rouletteSelections[category];
+      const selectedChipAmount = Number(lucky7State.rouletteSelectedChip || 5);
+
+      if (previous && previous.type === option) {
+        lucky7State.rouletteSelections[category] = null;
+      } else {
+        lucky7State.rouletteSelections[category] = {
+          type: option,
+          wager: Number(previous?.wager && previous.type !== option ? previous.wager : selectedChipAmount || 5),
+        };
+      }
+      renderLucky7App();
+    });
+  });
+
+  body.querySelectorAll('[data-lucky7-chip]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const chipValue = Number(button.dataset.lucky7Chip || 0);
+      if (!Number.isFinite(chipValue) || chipValue <= 0) {
+        return;
+      }
+      lucky7State.rouletteSelectedChip = chipValue;
+      renderLucky7App();
+    });
+  });
+
+  body.querySelectorAll('[data-lucky7-adjust-bet]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const category = button.dataset.lucky7AdjustCategory;
+      const action = button.dataset.lucky7AdjustBet;
+      if (!category || !action) {
+        return;
+      }
+      const selection = lucky7State.rouletteSelections[category];
+      if (!selection) {
+        return;
+      }
+
+      const delta = Number(lucky7State.rouletteSelectedChip || 1);
+      if (action === 'increase') {
+        selection.wager += delta;
+      } else if (action === 'decrease') {
+        selection.wager -= delta;
+        if (selection.wager <= 0) {
+          lucky7State.rouletteSelections[category] = null;
+        }
+      }
+      renderLucky7App();
+    });
+  });
+
+  const clearBetsButton = body.querySelector('[data-lucky7-clear-bets]');
+  if (clearBetsButton) {
+    clearBetsButton.addEventListener('click', () => {
+      lucky7State.rouletteSelections = {
+        color: null,
+        parity: null,
+        range: null,
+      };
+      renderLucky7App();
+    });
+  }
+
+  const repeatBetsButton = body.querySelector('[data-lucky7-repeat-bets]');
+  if (repeatBetsButton) {
+    repeatBetsButton.addEventListener('click', () => {
+      lucky7State.rouletteSelections = cloneRouletteSelections(lucky7State.previousRouletteSelections);
+      renderLucky7App();
+    });
+  }
+
+  const doubleBetsButton = body.querySelector('[data-lucky7-double-bets]');
+  if (doubleBetsButton) {
+    doubleBetsButton.addEventListener('click', () => {
+      const source = getRouletteSelectedBets(lucky7State.previousRouletteSelections).length
+        ? lucky7State.previousRouletteSelections
+        : lucky7State.rouletteSelections;
+      const doubled = cloneRouletteSelections(source);
+      Object.keys(doubled).forEach((category) => {
+        if (doubled[category]) {
+          doubled[category].wager = Number(doubled[category].wager || 0) * 2;
+        }
+      });
+      lucky7State.rouletteSelections = doubled;
+      renderLucky7App();
+    });
+  }
+
+  const playButton = body.querySelector('[data-lucky7-play]');
+  if (playButton) {
+    playButton.addEventListener('click', () => {
+      playLucky7Round();
+    });
+  }
+}
+
 function renderAppContent(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
   const body = appWindow.querySelector('.app-body');
@@ -5252,6 +6162,11 @@ function renderAppContent(appId, mode = 'normal') {
         moneytreeState.moderationMessage = successMessage;
         moneytreeState.moderationError = null;
         moneytreeState.moderationProcessingIds = moneytreeState.moderationProcessingIds.filter((id) => id !== contributionId);
+
+        if (moderationState === 'approved') {
+          await loadCitizenProfile();
+        }
+
         await loadModeratorQueue();
         await loadMoneytreeView();
         return;
@@ -5780,8 +6695,14 @@ function renderAppContent(appId, mode = 'normal') {
 
       const supabase = getAuthClient();
       const session = (await supabase?.auth.getSession())?.data?.session;
+      const hasValidSession = Boolean(supabase && session?.user);
 
       if (!supabase || !session?.user) {
+        console.warn('MoneyTree dashboard request blocked: no valid authenticated session.', {
+          hasSupabaseClient: Boolean(supabase),
+          hasValidSession,
+          sessionUserId: session?.user?.id ? '[redacted]' : null,
+        });
         renderErrorState('Your session has expired. Please sign in again.');
         return;
       }
@@ -5792,6 +6713,27 @@ function renderAppContent(appId, mode = 'normal') {
         });
 
         if (error) {
+          const errorStatus = Number(error?.status ?? error?.details?.status ?? 0);
+          const errorBody = typeof error?.context === 'object' && error.context !== null
+            ? error.context
+            : (typeof error?.message === 'string' ? { message: error.message } : {});
+
+          console.error('MoneyTree dashboard Edge Function failure', {
+            functionName: 'get-moneytree-dashboard',
+            httpStatus: errorStatus || 'unknown',
+            hasValidSession,
+            responseBody: errorBody,
+            supabaseError: {
+              name: error?.name || 'SupabaseError',
+              message: error?.message || 'Unknown error',
+              status: error?.status || null,
+              details: error?.details || null,
+              hint: error?.hint || null,
+              code: error?.code || null,
+            },
+            corsRejected: Boolean(errorStatus === 403 && typeof error?.message === 'string' && error.message.toLowerCase().includes('origin')),
+            authorizationRejected: Boolean(errorStatus === 401 || errorStatus === 403),
+          });
           throw error;
         }
 
@@ -5799,7 +6741,27 @@ function renderAppContent(appId, mode = 'normal') {
         await loadModeratorQueue();
         renderDashboard(data || {}, discussions);
       } catch (error) {
-        console.error('MoneyTree dashboard load failed:', error);
+        const httpStatus = Number(error?.status ?? 0);
+        const responseBody = typeof error?.context === 'object' && error.context !== null
+          ? error.context
+          : (typeof error?.message === 'string' ? { message: error.message } : {});
+
+        console.error('MoneyTree dashboard load failed:', {
+          functionName: 'get-moneytree-dashboard',
+          httpStatus: httpStatus || 'unknown',
+          hasValidSession,
+          responseBody,
+          supabaseError: {
+            name: error?.name || 'Error',
+            message: error?.message || 'Unknown error',
+            status: error?.status || null,
+            details: error?.details || null,
+            hint: error?.hint || null,
+            code: error?.code || null,
+          },
+          corsRejected: Boolean(httpStatus === 403 && typeof error?.message === 'string' && error.message.toLowerCase().includes('origin')),
+          authorizationRejected: Boolean(httpStatus === 401 || httpStatus === 403),
+        });
         renderErrorState('We couldn\'t load your MoneyTree information. Please try again.');
       }
     };
@@ -5817,10 +6779,233 @@ function renderAppContent(appId, mode = 'normal') {
           </div>
           <div id="moderatorQueueState" class="moneytree-empty-state"><strong>Loading moderation queue…</strong><p>Verifying moderator authorization and fetching pending submissions.</p></div>
         </div>
+
+        <div class="moneytree-panel">
+          <div class="moneytree-panel-header">
+            <h4>Owner Balance Management</h4>
+          </div>
+          <div id="moderatorOwnerState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before you can adjust balances.</p></div>
+        </div>
       </div>
     `;
 
     const queueState = document.getElementById('moderatorQueueState');
+    const ownerState = document.getElementById('moderatorOwnerState');
+
+    const renderOwnerBalancePanel = () => {
+      if (moderatorAppState.ownerLoading) {
+        ownerState.className = 'moneytree-empty-state';
+        ownerState.innerHTML = '<strong>Checking owner access…</strong><p>Validating project owner authorization before you can adjust balances.</p>';
+        return;
+      }
+
+      if (!moderatorAppState.ownerAccess) {
+        ownerState.className = 'moneytree-empty-state';
+        ownerState.innerHTML = `
+          <strong>Owner access required.</strong>
+          <p>${escapeHtml(moderatorAppState.ownerError || moderatorAppState.ownerMessage || 'Only the project owner may adjust citizen balances.')}</p>
+        `;
+        return;
+      }
+
+      ownerState.className = 'moneytree-activity-list';
+      ownerState.innerHTML = `
+        <div class="moneytree-review-item">
+          <div class="moneytree-review-header">
+            <div>
+              <div class="moneytree-review-title">Citizen balance adjustment</div>
+              <div class="moneytree-review-meta">Sensitive server-side ledger update</div>
+            </div>
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label" for="owner-balance-target-citizen-id">Target citizen ID</label>
+            <input id="owner-balance-target-citizen-id" class="moneytree-review-reason" type="text" value="${escapeHtml(moderatorAppState.ownerTargetCitizenId)}" placeholder="citizen UUID" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''} />
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label" for="owner-balance-amount">Adjustment amount</label>
+            <input id="owner-balance-amount" class="moneytree-review-reason" type="number" step="0.01" value="${escapeHtml(moderatorAppState.ownerAmount)}" placeholder="50.00" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''} />
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label" for="owner-balance-reason">Reason</label>
+            <textarea id="owner-balance-reason" class="moneytree-review-reason" rows="2" placeholder="Explain the balance adjustment." ${moderatorAppState.ownerSubmitting ? 'disabled' : ''}>${escapeHtml(moderatorAppState.ownerReason)}</textarea>
+          </div>
+
+          ${moderatorAppState.ownerError ? `<div class="moneytree-discussion-message error">${escapeHtml(moderatorAppState.ownerError)}</div>` : ''}
+          ${moderatorAppState.ownerMessage ? `<div class="moneytree-discussion-message success">${escapeHtml(moderatorAppState.ownerMessage)}</div>` : ''}
+
+          <div class="moneytree-review-actions">
+            <button type="button" class="moneytree-review-button approve" data-action="owner-adjust-citizen-balance" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''}>
+              ${moderatorAppState.ownerSubmitting ? 'Applying…' : 'Apply adjustment'}
+            </button>
+          </div>
+        </div>
+      `;
+
+      const targetInput = document.getElementById('owner-balance-target-citizen-id');
+      const amountInput = document.getElementById('owner-balance-amount');
+      const reasonInput = document.getElementById('owner-balance-reason');
+
+      if (targetInput) {
+        targetInput.addEventListener('input', (event) => {
+          moderatorAppState.ownerTargetCitizenId = event.target.value || '';
+          moderatorAppState.ownerError = null;
+          renderOwnerBalancePanel();
+        });
+      }
+
+      if (amountInput) {
+        amountInput.addEventListener('input', (event) => {
+          moderatorAppState.ownerAmount = event.target.value || '';
+          moderatorAppState.ownerError = null;
+          renderOwnerBalancePanel();
+        });
+      }
+
+      if (reasonInput) {
+        reasonInput.addEventListener('input', (event) => {
+          moderatorAppState.ownerReason = event.target.value || '';
+          moderatorAppState.ownerError = null;
+          renderOwnerBalancePanel();
+        });
+      }
+    };
+
+    const refreshOwnerPanel = async () => {
+      await loadOwnerAccessForApp();
+      renderOwnerBalancePanel();
+    };
+
+    refreshOwnerPanel();
+
+    const loadOwnerBalanceForm = () => {
+      if (!moderatorAppState.ownerAccess) {
+        renderOwnerBalancePanel();
+        return;
+      }
+
+      renderOwnerBalancePanel();
+    };
+
+    loadOwnerBalanceForm();
+
+    const loadOwnerAccessForApp = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moderatorAppState.ownerAccess = false;
+        moderatorAppState.ownerMessage = null;
+        moderatorAppState.ownerError = null;
+        return false;
+      }
+
+      try {
+        moderatorAppState.ownerLoading = true;
+        moderatorAppState.ownerError = null;
+        moderatorAppState.ownerMessage = null;
+
+        const { data, error } = await supabase.rpc('owner_balance_self_check');
+        console.log('[owner balance self-check]', {
+          data,
+          error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
+          dataType: Array.isArray(data) ? 'array' : typeof data,
+          sessionUserId: session.user?.id,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const firstResult = Array.isArray(data) ? data[0] : data;
+        moderatorAppState.ownerAccess = Boolean(firstResult?.is_owner);
+        if (!moderatorAppState.ownerAccess) {
+          moderatorAppState.ownerMessage = 'Owner access required to adjust citizen balances.';
+        }
+        return moderatorAppState.ownerAccess;
+      } catch (error) {
+        console.error('Moderator owner access check failed:', error);
+        moderatorAppState.ownerAccess = false;
+        moderatorAppState.ownerError = error?.message || 'Unable to verify owner access.';
+        moderatorAppState.ownerMessage = null;
+        return false;
+      } finally {
+        moderatorAppState.ownerLoading = false;
+      }
+    };
+
+    const handleOwnerBalanceAdjustment = async () => {
+      const supabase = getAuthClient();
+      const session = (await supabase?.auth.getSession())?.data?.session;
+
+      if (!supabase || !session?.user) {
+        moderatorAppState.ownerError = 'Your session has expired. Please sign in again.';
+        moderatorAppState.ownerMessage = null;
+        return;
+      }
+
+      const targetCitizenId = (moderatorAppState.ownerTargetCitizenId || '').trim();
+      const rawAmount = Number.parseFloat(String(moderatorAppState.ownerAmount ?? '').trim());
+      const reason = (moderatorAppState.ownerReason || '').trim();
+
+      if (!targetCitizenId) {
+        moderatorAppState.ownerError = 'Enter a citizen ID before adjusting the balance.';
+        moderatorAppState.ownerMessage = null;
+        return;
+      }
+
+      if (!Number.isFinite(rawAmount) || rawAmount === 0) {
+        moderatorAppState.ownerError = 'The adjustment amount must be a non-zero number.';
+        moderatorAppState.ownerMessage = null;
+        return;
+      }
+
+      if (!reason) {
+        moderatorAppState.ownerError = 'Include a reason for the balance adjustment.';
+        moderatorAppState.ownerMessage = null;
+        return;
+      }
+
+      moderatorAppState.ownerSubmitting = true;
+      moderatorAppState.ownerError = null;
+      moderatorAppState.ownerMessage = 'Applying citizen balance adjustment…';
+
+      try {
+        const requestKey = globalThis.crypto?.randomUUID?.() || `owner-balance-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const { data, error } = await supabase.rpc('owner_adjust_citizen_balance', {
+          p_target_citizen_id: targetCitizenId,
+          p_amount: rawAmount,
+          p_reason: reason,
+          p_idempotency_key: requestKey,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        const resultLabel = result?.result === 'duplicate_request'
+          ? 'This adjustment was already recorded.'
+          : 'Citizen balance adjustment applied successfully.';
+
+        moderatorAppState.ownerMessage = resultLabel;
+        moderatorAppState.ownerError = null;
+        moderatorAppState.ownerTargetCitizenId = '';
+        moderatorAppState.ownerAmount = '';
+        moderatorAppState.ownerReason = '';
+        moderatorAppState.ownerSubmitting = false;
+        await loadOwnerAccessForApp();
+        return result;
+      } catch (error) {
+        console.error('Owner balance adjustment failed:', error);
+        moderatorAppState.ownerError = error?.message || 'Unable to apply the balance adjustment.';
+        moderatorAppState.ownerMessage = null;
+      } finally {
+        moderatorAppState.ownerSubmitting = false;
+      }
+    };
 
     const renderModeratorQueue = (queue) => {
       if (!queue.length) {
@@ -6050,6 +7235,20 @@ function renderAppContent(appId, mode = 'normal') {
             return;
           }
           await handleModeratorDecisionForApp(contributionId, 'rejected', rejectionReason);
+          return;
+        }
+
+        const ownerAdjustmentButton = event.target.closest('[data-action="owner-adjust-citizen-balance"]');
+        if (ownerAdjustmentButton) {
+          if (!moderatorAppState.ownerAccess) {
+            moderatorAppState.ownerError = 'Owner access is required to apply balance adjustments.';
+            moderatorAppState.ownerMessage = null;
+            renderOwnerBalancePanel();
+            return;
+          }
+
+          await handleOwnerBalanceAdjustment();
+          renderOwnerBalancePanel();
         }
       });
     }
@@ -6063,6 +7262,12 @@ function renderAppContent(appId, mode = 'normal') {
     if (!storeState.hasLoaded) {
       loadStoreCatalog();
     }
+    return;
+  }
+
+  if (appId === 'lucky7') {
+    renderLucky7App();
+    loadLucky7History();
     return;
   }
 
