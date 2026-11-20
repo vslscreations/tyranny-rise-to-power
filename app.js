@@ -278,6 +278,7 @@ const moderatorAppState = {
   ownerAmount: '',
   ownerReason: '',
   ownerSubmitting: false,
+  ownerHistory: [],
 };
 
 const appLayer = document.getElementById('app-layer');
@@ -3489,6 +3490,46 @@ function renderPlayerDetails() {
   const lucky7Body = document.querySelector('#app-lucky7 .app-body');
   if (lucky7Body && typeof renderLucky7App === 'function') {
     renderLucky7App();
+  }
+}
+
+async function refreshCitizenBalanceFromSupabase(citizenId) {
+  const supabase = getAuthClient();
+  if (!supabase || !citizenId) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('citizen_private')
+      .select('citizen_id, balance')
+      .eq('citizen_id', citizenId)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    const nextBalance = Number(data.balance);
+    const isCurrentCitizen = Boolean(profileState.citizen?.id && profileState.citizen.id === citizenId);
+
+    if (isCurrentCitizen) {
+      profileState.private = {
+        ...(profileState.private || {}),
+        balance: nextBalance,
+      };
+      applyCitizenProfile(profileState.citizen);
+      renderPlayerDetails();
+    }
+
+    return nextBalance;
+  } catch (error) {
+    console.warn('Citizen balance refresh failed:', error);
+    return null;
   }
 }
 
@@ -6836,6 +6877,15 @@ function renderAppContent(appId, mode = 'normal') {
           ${moderatorAppState.ownerError ? `<div class="moneytree-discussion-message error">${escapeHtml(moderatorAppState.ownerError)}</div>` : ''}
           ${moderatorAppState.ownerMessage ? `<div class="moneytree-discussion-message success">${escapeHtml(moderatorAppState.ownerMessage)}</div>` : ''}
 
+          ${moderatorAppState.ownerHistory.length ? `
+            <div class="moneytree-discussion-message success">
+              <strong>Recent credits</strong><br>
+              ${moderatorAppState.ownerHistory.map((entry) => `
+                <span>${escapeHtml(entry.targetCitizenId)} • ${escapeHtml(formatCurrency(entry.amount))} • ${escapeHtml(formatCurrency(entry.balanceAfter))}</span><br>
+              `).join('')}
+            </div>
+          ` : ''}
+
           <div class="moneytree-review-actions">
             <button type="button" class="moneytree-review-button approve" data-action="owner-adjust-citizen-balance" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''}>
               ${moderatorAppState.ownerSubmitting ? 'Applying…' : 'Apply adjustment'}
@@ -6852,7 +6902,6 @@ function renderAppContent(appId, mode = 'normal') {
         targetInput.addEventListener('input', (event) => {
           moderatorAppState.ownerTargetCitizenId = event.target.value || '';
           moderatorAppState.ownerError = null;
-          renderOwnerBalancePanel();
         });
       }
 
@@ -6860,7 +6909,6 @@ function renderAppContent(appId, mode = 'normal') {
         amountInput.addEventListener('input', (event) => {
           moderatorAppState.ownerAmount = event.target.value || '';
           moderatorAppState.ownerError = null;
-          renderOwnerBalancePanel();
         });
       }
 
@@ -6868,28 +6916,9 @@ function renderAppContent(appId, mode = 'normal') {
         reasonInput.addEventListener('input', (event) => {
           moderatorAppState.ownerReason = event.target.value || '';
           moderatorAppState.ownerError = null;
-          renderOwnerBalancePanel();
         });
       }
     };
-
-    const refreshOwnerPanel = async () => {
-      await loadOwnerAccessForApp();
-      renderOwnerBalancePanel();
-    };
-
-    refreshOwnerPanel();
-
-    const loadOwnerBalanceForm = () => {
-      if (!moderatorAppState.ownerAccess) {
-        renderOwnerBalancePanel();
-        return;
-      }
-
-      renderOwnerBalancePanel();
-    };
-
-    loadOwnerBalanceForm();
 
     const loadOwnerAccessForApp = async () => {
       const supabase = getAuthClient();
@@ -6908,13 +6937,6 @@ function renderAppContent(appId, mode = 'normal') {
         moderatorAppState.ownerMessage = null;
 
         const { data, error } = await supabase.rpc('owner_balance_self_check');
-        console.log('[owner balance self-check]', {
-          data,
-          error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
-          dataType: Array.isArray(data) ? 'array' : typeof data,
-          sessionUserId: session.user?.id,
-        });
-
         if (error) {
           throw error;
         }
@@ -6935,6 +6957,24 @@ function renderAppContent(appId, mode = 'normal') {
         moderatorAppState.ownerLoading = false;
       }
     };
+
+    const refreshOwnerPanel = async () => {
+      await loadOwnerAccessForApp();
+      renderOwnerBalancePanel();
+    };
+
+    refreshOwnerPanel();
+
+    const loadOwnerBalanceForm = () => {
+      if (!moderatorAppState.ownerAccess) {
+        renderOwnerBalancePanel();
+        return;
+      }
+
+      renderOwnerBalancePanel();
+    };
+
+    loadOwnerBalanceForm();
 
     const handleOwnerBalanceAdjustment = async () => {
       const supabase = getAuthClient();
@@ -6968,6 +7008,10 @@ function renderAppContent(appId, mode = 'normal') {
         return;
       }
 
+      if (moderatorAppState.ownerSubmitting) {
+        return null;
+      }
+
       moderatorAppState.ownerSubmitting = true;
       moderatorAppState.ownerError = null;
       moderatorAppState.ownerMessage = 'Applying citizen balance adjustment…';
@@ -6986,16 +7030,37 @@ function renderAppContent(appId, mode = 'normal') {
         }
 
         const result = Array.isArray(data) ? data[0] : data;
+        const creditedAmount = Number(result?.amount ?? rawAmount);
+        const balanceAfter = Number(result?.balance_after ?? Number(profileState.private?.balance ?? 0) + creditedAmount);
         const resultLabel = result?.result === 'duplicate_request'
           ? 'This adjustment was already recorded.'
-          : 'Citizen balance adjustment applied successfully.';
+          : `Citizen balance adjustment applied successfully. Credited ${formatCurrency(creditedAmount)}. Updated balance: ${formatCurrency(balanceAfter)}.`;
+
+        moderatorAppState.ownerHistory = [{
+          targetCitizenId,
+          amount: creditedAmount,
+          balanceAfter,
+          result: result?.result || 'adjusted',
+        }, ...moderatorAppState.ownerHistory].slice(0, 5);
 
         moderatorAppState.ownerMessage = resultLabel;
         moderatorAppState.ownerError = null;
-        moderatorAppState.ownerTargetCitizenId = '';
         moderatorAppState.ownerAmount = '';
         moderatorAppState.ownerReason = '';
-        moderatorAppState.ownerSubmitting = false;
+
+        if (targetCitizenId === profileState.citizen?.id) {
+          profileState.private = {
+            ...(profileState.private || {}),
+            balance: balanceAfter,
+          };
+          applyCitizenProfile(profileState.citizen);
+          renderPlayerDetails();
+          await loadCitizenProfile();
+        } else {
+          await refreshCitizenBalanceFromSupabase(targetCitizenId);
+        }
+
+        renderOwnerBalancePanel();
         await loadOwnerAccessForApp();
         return result;
       } catch (error) {
