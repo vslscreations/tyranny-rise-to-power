@@ -258,6 +258,18 @@ const lucky7State = {
   historyLoading: false,
   historyError: null,
 };
+
+const votingState = {
+  ownerAccess: false,
+  ownerLoading: false,
+  ownerError: null,
+  ownerMessage: null,
+  loading: false,
+  error: null,
+  polls: [],
+  citizenPolls: [],
+  closedPolls: [],
+};
 const lucky7BetDenominations = [1, 2, 3, 4, 5, 10, 15, 20, 50];
 let activeAppId = null;
 let lockVisible = true;
@@ -279,6 +291,15 @@ const moderatorAppState = {
   ownerReason: '',
   ownerSubmitting: false,
   ownerHistory: [],
+};
+
+const moderatorPollState = {
+  loading: false,
+  error: null,
+  message: null,
+  polls: [],
+  editingPollId: null,
+  draftEdits: {},
 };
 
 const appLayer = document.getElementById('app-layer');
@@ -5455,6 +5476,223 @@ function renderLucky7App() {
   }
 }
 
+async function loadVotingData() {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession?.())?.data?.session;
+
+  if (!supabase || !session?.user) {
+    votingState.ownerAccess = false;
+    votingState.ownerError = 'Sign in to access the Voting Booth.';
+    votingState.ownerMessage = null;
+    votingState.loading = false;
+    votingState.error = 'You must be signed in before voting.';
+    return;
+  }
+
+  votingState.loading = true;
+  votingState.error = null;
+  votingState.ownerError = null;
+  votingState.ownerMessage = null;
+
+  try {
+    const { data: ownerCheckData, error: ownerCheckError } = await supabase.rpc('owner_balance_self_check');
+    if (ownerCheckError) {
+      throw ownerCheckError;
+    }
+
+    const ownerPayload = Array.isArray(ownerCheckData) ? ownerCheckData[0] : ownerCheckData;
+    votingState.ownerAccess = Boolean(ownerPayload?.is_owner);
+
+    if (votingState.ownerAccess) {
+      const { data: ownerPolls, error: ownerPollsError } = await supabase.rpc('owner_get_polls');
+      if (ownerPollsError) {
+        throw ownerPollsError;
+      }
+      votingState.polls = Array.isArray(ownerPolls) ? ownerPolls : [];
+    }
+
+    const { data: citizenPolls, error: citizenPollsError } = await supabase.rpc('get_open_polls_for_citizen');
+    if (citizenPollsError) {
+      throw citizenPollsError;
+    }
+    votingState.citizenPolls = Array.isArray(citizenPolls) ? citizenPolls : [];
+
+    const { data: closedPolls, error: closedPollsError } = await supabase.rpc('get_closed_polls_for_citizen');
+    if (closedPollsError) {
+      throw closedPollsError;
+    }
+    votingState.closedPolls = Array.isArray(closedPolls) ? closedPolls : [];
+  } catch (error) {
+    console.error('Voting booth load failed:', error);
+    votingState.error = error?.message || 'Unable to load the voting booth right now.';
+    votingState.polls = [];
+    votingState.citizenPolls = [];
+    votingState.closedPolls = [];
+  } finally {
+    votingState.loading = false;
+    const votingWindow = document.getElementById('app-voting');
+    if (votingWindow) {
+      renderVotingApp();
+    }
+  }
+}
+
+function renderVotingApp() {
+  const appWindow = ensureAppWindow('voting');
+  const body = appWindow.querySelector('.app-body');
+  if (!body) {
+    return;
+  }
+
+  const citizenPanel = `
+    <div class="moneytree-panel" style="margin-top: ${votingState.ownerAccess ? '24px' : '0'};">
+      <div class="moneytree-panel-header">
+        <div>
+          <div class="section-kicker">${votingState.ownerAccess ? 'Citizen preview' : 'Citizen view'}</div>
+          <h4>Open polls</h4>
+        </div>
+        <button type="button" class="secondary-button" data-action="refresh-voting-data">Refresh</button>
+      </div>
+
+      ${votingState.loading ? '<div class="moneytree-empty-state"><strong>Loading polls…</strong><p>Checking current ballot availability.</p></div>' : ''}
+      ${votingState.error ? `<div class="moneytree-discussion-message error">${escapeHtml(votingState.error)}</div>` : ''}
+      ${votingState.citizenPolls.length ? votingState.citizenPolls.map((poll) => {
+        const optionButtons = Array.isArray(poll.options) ? poll.options : [];
+        const hasVoted = Boolean(poll.user_has_voted);
+        const canVote = Boolean(poll.is_eligible) && !hasVoted;
+
+        return `
+          <article class="voting-poll-card">
+            <div class="voting-poll-header">
+              <div>
+                <h5 class="voting-poll-title">${escapeHtml(poll.question || 'Ballot')}</h5>
+                <div class="voting-poll-meta">${poll.required_diploma ? 'Requires diploma' : 'Open to all citizens'} • ${hasVoted ? 'Vote locked in' : canVote ? 'Open for voting' : 'Not eligible'}</div>
+              </div>
+              <span class="voting-status-pill">${hasVoted ? 'Voted' : canVote ? 'Live' : 'Closed'}</span>
+            </div>
+
+            ${poll.description ? `
+              <div class="moneytree-review-content">
+                <p>${escapeHtml(poll.description)}</p>
+              </div>
+            ` : ''}
+
+            <div class="voting-option-row">
+              ${optionButtons.length ? optionButtons.map((option) => `
+                <button
+                  type="button"
+                  class="voting-option-button ${poll.my_vote_option_id === option.id ? 'selected' : ''}"
+                  data-action="vote-on-poll"
+                  data-poll-id="${escapeHtml(poll.poll_id || poll.id || '')}"
+                  data-option-id="${escapeHtml(option.id)}"
+                  ${!canVote ? 'disabled' : ''}
+                >
+                  ${escapeHtml(option.option_text || 'Choice')}
+                </button>
+              `).join('') : '<div class="moneytree-empty-state"><strong>No options are available.</strong></div>'}
+            </div>
+          </article>
+        `;
+      }).join('') : '<div class="moneytree-empty-state"><strong>No open ballots right now.</strong><p>Check back when the owner opens a new poll.</p></div>'}
+    </div>
+  `;
+
+  body.innerHTML = `
+    <div class="voting-booth-shell">
+      ${votingState.loading ? '<div class="voting-booth-card"><div class="moneytree-empty-state"><strong>Loading ballots…</strong><p>Checking the current voting schedule and eligibility.</p></div></div>' : ''}
+      <div class="voting-booth-card">
+        <div class="moneytree-discussion-message ${votingState.ownerError ? 'error' : 'success'}">${escapeHtml(votingState.ownerError || 'Citizen ballot access is open.')}</div>
+      </div>
+
+      ${citizenPanel}
+
+      <div class="voting-booth-card">
+        <div class="voting-booth-header">
+          <div>
+            <div class="section-kicker">Citizen results</div>
+            <h4>Closed ballots</h4>
+          </div>
+        </div>
+
+        ${votingState.closedPolls.length ? votingState.closedPolls.map((poll) => {
+          const options = Array.isArray(poll.options) ? poll.options : [];
+          const winnerText = poll.winner_text ? `${escapeHtml(poll.winner_text)} (${Number(poll.winner_percent || 0).toFixed(1)}%)` : 'No winner yet';
+          return `
+            <article class="voting-poll-card">
+              <div class="voting-poll-header">
+                <div>
+                  <h5 class="voting-poll-title">${escapeHtml(poll.question || 'Closed ballot')}</h5>
+                  <div class="voting-poll-meta">Final result • ${poll.required_diploma ? 'Diploma required' : 'Open to all citizens'}</div>
+                </div>
+                <span class="voting-status-pill">Closed</span>
+              </div>
+
+              <div class="voting-stat-grid">
+                <div class="voting-stat-item"><span>Winner</span><strong>${winnerText}</strong></div>
+                <div class="voting-stat-item"><span>Turnout</span><strong>${Number(poll.turnout ?? 0).toFixed(2)}%</strong></div>
+                <div class="voting-stat-item"><span>Total votes</span><strong>${Number(poll.total_votes ?? 0)}</strong></div>
+                <div class="voting-stat-item"><span>Eligible</span><strong>${Number(poll.total_eligible ?? 0)}</strong></div>
+              </div>
+
+              <div class="moneytree-review-content">
+                ${options.length ? options.map((option) => `
+                  <div class="voting-stat-item" style="margin-top:8px;"><span>${escapeHtml(option.option_text || 'Option')}</span><strong>${Number(option.vote_count ?? 0)} votes • ${Number(option.percent ?? 0).toFixed(1)}%</strong></div>
+                `).join('') : '<p>No result details are available.</p>'}
+              </div>
+            </article>
+          `;
+        }).join('') : '<div class="moneytree-empty-state"><strong>No closed ballots yet.</strong><p>Results will appear here once an owner closes a poll.</p></div>'}
+      </div>
+    </div>
+  `;
+
+  const refreshButton = body.querySelector('[data-action="refresh-voting-data"]');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => {
+      loadVotingData();
+    });
+  }
+
+  const voteButtons = body.querySelectorAll('[data-action="vote-on-poll"]');
+  voteButtons.forEach((button) => {
+    button.addEventListener('click', async () => {
+      const pollId = button.dataset.pollId;
+      const optionId = button.dataset.optionId;
+      if (!pollId || !optionId) {
+        return;
+      }
+
+      const supabase = getAuthClient();
+      if (!supabase) {
+        return;
+      }
+
+      try {
+        votingState.ownerError = null;
+        votingState.ownerMessage = null;
+        const { data, error } = await supabase.rpc('submit_poll_vote', {
+          p_poll_id: pollId,
+          p_option_id: optionId,
+        });
+        if (error) {
+          throw error;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        if (result?.result === 'voted') {
+          await loadVotingData();
+        } else {
+          await loadVotingData();
+        }
+      } catch (error) {
+        console.error('Vote submission failed:', error);
+        votingState.error = error?.message || 'Unable to submit your vote.';
+        renderVotingApp();
+      }
+    });
+  });
+}
+
 function renderAppContent(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
   const body = appWindow.querySelector('.app-body');
@@ -6827,11 +7065,244 @@ function renderAppContent(appId, mode = 'normal') {
           </div>
           <div id="moderatorOwnerState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before you can adjust balances.</p></div>
         </div>
+
+        <div class="moneytree-panel">
+          <div class="moneytree-panel-header">
+            <h4>Poll Management</h4>
+          </div>
+          <div id="moderatorPollState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before managing civic polls.</p></div>
+        </div>
       </div>
     `;
 
     const queueState = document.getElementById('moderatorQueueState');
     const ownerState = document.getElementById('moderatorOwnerState');
+    const pollState = document.getElementById('moderatorPollState');
+
+    const renderModeratorPollPanel = () => {
+      if (!pollState) {
+        return;
+      }
+
+      if (moderatorAppState.ownerLoading) {
+        pollState.className = 'moneytree-empty-state';
+        pollState.innerHTML = '<strong>Checking owner access…</strong><p>Validating project owner authorization before you can manage civic polls.</p>';
+        return;
+      }
+
+      if (moderatorPollState.loading) {
+        pollState.className = 'moneytree-empty-state';
+        pollState.innerHTML = '<strong>Loading polls…</strong><p>Checking the current civic ballot state for approved owner actions.</p>';
+        return;
+      }
+
+      if (!moderatorAppState.ownerAccess) {
+        pollState.className = 'moneytree-empty-state';
+        pollState.innerHTML = `
+          <strong>Owner access required.</strong>
+          <p>${escapeHtml(moderatorAppState.ownerError || moderatorAppState.ownerMessage || 'Only the project owner may manage civic polls.')}</p>
+        `;
+        return;
+      }
+
+      const createPollMarkup = `
+        <div class="moneytree-review-item">
+          <div class="moneytree-review-header">
+            <div>
+              <div class="moneytree-review-title">Create draft poll</div>
+              <div class="moneytree-review-meta">Owner-only civic ballot setup</div>
+            </div>
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label" for="moderator-poll-question">Question</label>
+            <input id="moderator-poll-question" class="moneytree-review-reason" type="text" placeholder="What should the district prioritize?" value="" />
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label" for="moderator-poll-description">Description</label>
+            <textarea id="moderator-poll-description" class="moneytree-review-reason" rows="2" placeholder="Optional context for citizens."></textarea>
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label" for="moderator-poll-diploma">
+              <input id="moderator-poll-diploma" type="checkbox" /> Require High School Diploma
+            </label>
+          </div>
+
+          <div class="moneytree-review-content">
+            <label class="moneytree-review-label">Answer choices</label>
+            <div id="moderator-poll-choice-list">
+              <input class="moneytree-review-reason" type="text" data-moderator-create-choice value="" placeholder="Choice 1" />
+              <input class="moneytree-review-reason" type="text" data-moderator-create-choice value="" placeholder="Choice 2" />
+            </div>
+            <button type="button" class="secondary-button" data-action="moderator-add-poll-choice" style="margin-top:10px;">Add option</button>
+          </div>
+
+          ${moderatorPollState.error ? `<div class="moneytree-discussion-message error">${escapeHtml(moderatorPollState.error)}</div>` : ''}
+          ${moderatorPollState.message ? `<div class="moneytree-discussion-message success">${escapeHtml(moderatorPollState.message)}</div>` : ''}
+
+          <div class="moneytree-review-actions">
+            <button type="button" class="moneytree-review-button approve" data-action="moderator-create-poll">Create draft poll</button>
+          </div>
+        </div>
+      `;
+
+      const pollsMarkup = moderatorPollState.polls.length ? moderatorPollState.polls.map((poll) => {
+        const options = Array.isArray(poll.options) ? poll.options : [];
+        const isDraft = poll.status === 'draft';
+        const isOpen = poll.status === 'open';
+        const isClosed = poll.status === 'closed';
+        const draftEditing = moderatorPollState.editingPollId === poll.poll_id;
+
+        const optionSummary = options.length ? options.map((option) => `
+          <div class="info-row"><span>${escapeHtml(option.option_text || 'Option')}</span><span>${Number(option.vote_count ?? 0)} votes • ${Number(option.percent ?? 0).toFixed(1)}%</span></div>
+        `).join('') : '<div class="moneytree-empty-state"><strong>No options available.</strong></div>';
+
+        const draftEditMarkup = draftEditing ? (() => {
+          const draft = moderatorPollState.draftEdits[poll.poll_id] || {
+            question: poll.question || '',
+            description: poll.description || '',
+            required_diploma: Boolean(poll.required_diploma),
+            options: options.map((option) => ({ id: option.id, text: option.option_text || '', removed: false })),
+          };
+
+          return `
+            <div class="moneytree-review-content">
+              <label class="moneytree-review-label" for="poll-edit-question-${escapeHtml(poll.poll_id || '')}">Question</label>
+              <input id="poll-edit-question-${escapeHtml(poll.poll_id || '')}" class="moneytree-review-reason" type="text" value="${escapeHtml(draft.question)}" />
+            </div>
+
+            <div class="moneytree-review-content">
+              <label class="moneytree-review-label" for="poll-edit-description-${escapeHtml(poll.poll_id || '')}">Description</label>
+              <textarea id="poll-edit-description-${escapeHtml(poll.poll_id || '')}" class="moneytree-review-reason" rows="2">${escapeHtml(draft.description)}</textarea>
+            </div>
+
+            <div class="moneytree-review-content">
+              <label class="moneytree-review-label" for="poll-edit-diploma-${escapeHtml(poll.poll_id || '')}">
+                <input id="poll-edit-diploma-${escapeHtml(poll.poll_id || '')}" type="checkbox" ${draft.required_diploma ? 'checked' : ''} /> Require High School Diploma
+              </label>
+            </div>
+
+            <div class="moneytree-review-content">
+              <label class="moneytree-review-label">Answer choices</label>
+              <div data-edit-choice-list="${escapeHtml(poll.poll_id || '')}">
+                ${draft.options.length ? draft.options.map((option, index) => `
+                  <div class="moneytree-review-content" style="padding:0; display:flex; gap:8px; align-items:center;">
+                    <input class="moneytree-review-reason" type="text" data-poll-edit-choice="${escapeHtml(poll.poll_id || '')}" data-option-id="${escapeHtml(option.id || '')}" value="${escapeHtml(option.text)}" style="flex:1;" />
+                    <button type="button" class="secondary-button" data-action="moderator-delete-edit-choice" data-poll-id="${escapeHtml(poll.poll_id || '')}" data-option-index="${index}">Remove</button>
+                  </div>
+                `).join('') : '<div class="moneytree-empty-state"><strong>No options yet.</strong></div>'}
+              </div>
+              <button type="button" class="secondary-button" data-action="moderator-add-edit-choice" data-poll-id="${escapeHtml(poll.poll_id || '')}" style="margin-top:10px;">Add option</button>
+            </div>
+
+            <div class="moneytree-review-actions">
+              <button type="button" class="moneytree-review-button approve" data-action="moderator-save-draft-poll" data-poll-id="${escapeHtml(poll.poll_id || '')}">Save changes</button>
+              <button type="button" class="moneytree-review-button reject" data-action="moderator-cancel-edit-poll" data-poll-id="${escapeHtml(poll.poll_id || '')}">Cancel</button>
+            </div>
+          `;
+        })() : '';
+
+        return `
+          <article class="moneytree-review-item" style="margin-top:12px;">
+            <div class="moneytree-review-header">
+              <div>
+                <div class="moneytree-review-title">${escapeHtml(poll.question || 'Untitled poll')}</div>
+                <div class="moneytree-review-meta">${escapeHtml(poll.status || 'draft')} • ${poll.required_diploma ? 'Diploma required' : 'Open to all citizens'}</div>
+              </div>
+              <span class="moneytree-review-pill">${escapeHtml(isDraft ? 'Draft' : isOpen ? 'Open' : isClosed ? 'Closed' : poll.status || 'Draft')}</span>
+            </div>
+
+            ${draftEditing ? draftEditMarkup : `
+              <div class="moneytree-review-content">
+                <p>${escapeHtml(poll.description || 'No detailed description provided.')}</p>
+                <div class="mylife-grid">
+                  <div class="info-row"><span>Turnout</span><span>${Number(poll.turnout ?? 0).toFixed(2)}%</span></div>
+                  <div class="info-row"><span>Votes</span><span>${Number(poll.total_votes ?? 0)}</span></div>
+                  <div class="info-row"><span>Eligible</span><span>${Number(poll.total_eligible ?? 0)}</span></div>
+                  <div class="info-row"><span>Winner</span><span>${escapeHtml(poll.winner_text || 'No votes yet')}</span></div>
+                </div>
+              </div>
+
+              <div class="moneytree-review-content">
+                ${optionSummary}
+              </div>
+
+              <div class="moneytree-review-actions">
+                ${isDraft ? `<button type="button" class="moneytree-review-button approve" data-action="moderator-edit-poll" data-poll-id="${escapeHtml(poll.poll_id || '')}">Edit draft</button>` : ''}
+                ${isDraft ? `<button type="button" class="moneytree-review-button approve" data-action="moderator-open-poll" data-poll-id="${escapeHtml(poll.poll_id || '')}">Start Poll</button>` : ''}
+                ${isOpen ? `<button type="button" class="moneytree-review-button reject" data-action="moderator-close-poll" data-poll-id="${escapeHtml(poll.poll_id || '')}">End Poll</button>` : ''}
+              </div>
+            `}
+          </article>
+        `;
+      }).join('') : '<div class="moneytree-empty-state"><strong>No polls available.</strong><p>Start a draft poll to begin the civic voting cycle.</p></div>';
+
+      pollState.className = 'moneytree-activity-list';
+      pollState.innerHTML = `${createPollMarkup}${pollsMarkup}`;
+    };
+
+    const syncPollDraft = (pollId, poll) => {
+      const primary = {
+        question: poll?.question || '',
+        description: poll?.description || '',
+        required_diploma: Boolean(poll?.required_diploma),
+        options: Array.isArray(poll?.options) ? poll.options.map((option) => ({
+          id: option?.id || null,
+          text: option?.option_text || '',
+          removed: false,
+        })) : [],
+        removedOptionIds: [],
+      };
+
+      moderatorPollState.draftEdits[pollId] = primary;
+    };
+
+    const loadModeratorPollData = async () => {
+      if (!moderatorAppState.ownerAccess) {
+        moderatorPollState.polls = [];
+        moderatorPollState.error = null;
+        moderatorPollState.message = null;
+        moderatorPollState.editingPollId = null;
+        moderatorPollState.draftEdits = {};
+        renderModeratorPollPanel();
+        return;
+      }
+
+      moderatorPollState.loading = true;
+      moderatorPollState.error = null;
+      moderatorPollState.message = null;
+      renderModeratorPollPanel();
+
+      try {
+        const supabase = getAuthClient();
+        if (!supabase) {
+          throw new Error('Authentication unavailable.');
+        }
+
+        const { data, error } = await supabase.rpc('owner_get_polls');
+        if (error) {
+          throw error;
+        }
+
+        moderatorPollState.polls = Array.isArray(data) ? data : [];
+        moderatorPollState.draftEdits = {};
+        moderatorPollState.editingPollId = null;
+        moderatorPollState.polls.forEach((poll) => {
+          if (poll?.poll_id) {
+            syncPollDraft(poll.poll_id, poll);
+          }
+        });
+      } catch (error) {
+        console.error('Moderator poll load failed:', error);
+        moderatorPollState.error = error?.message || 'Unable to load the polls right now.';
+        moderatorPollState.polls = [];
+      } finally {
+        moderatorPollState.loading = false;
+        renderModeratorPollPanel();
+      }
+    };
 
     const renderOwnerBalancePanel = () => {
       if (moderatorAppState.ownerLoading) {
@@ -6961,9 +7432,19 @@ function renderAppContent(appId, mode = 'normal') {
     const refreshOwnerPanel = async () => {
       await loadOwnerAccessForApp();
       renderOwnerBalancePanel();
-    };
+      renderModeratorPollPanel();
 
-    refreshOwnerPanel();
+      if (moderatorAppState.ownerAccess) {
+        await loadModeratorPollData();
+      } else {
+        moderatorPollState.polls = [];
+        moderatorPollState.error = null;
+        moderatorPollState.message = null;
+        moderatorPollState.editingPollId = null;
+        moderatorPollState.draftEdits = {};
+        renderModeratorPollPanel();
+      }
+    };
 
     const loadOwnerBalanceForm = () => {
       if (!moderatorAppState.ownerAccess) {
@@ -6975,6 +7456,7 @@ function renderAppContent(appId, mode = 'normal') {
     };
 
     loadOwnerBalanceForm();
+    renderModeratorPollPanel();
 
     const handleOwnerBalanceAdjustment = async () => {
       const supabase = getAuthClient();
@@ -7315,10 +7797,328 @@ function renderAppContent(appId, mode = 'normal') {
           await handleOwnerBalanceAdjustment();
           renderOwnerBalancePanel();
         }
+
+        const addPollChoiceButton = event.target.closest('[data-action="moderator-add-poll-choice"]');
+        if (addPollChoiceButton) {
+          const choiceList = document.getElementById('moderator-poll-choice-list');
+          if (choiceList) {
+            const newInput = document.createElement('input');
+            newInput.type = 'text';
+            newInput.className = 'moneytree-review-reason';
+            newInput.setAttribute('data-moderator-create-choice', 'true');
+            newInput.placeholder = `Choice ${choiceList.querySelectorAll('[data-moderator-create-choice]').length + 1}`;
+            choiceList.appendChild(newInput);
+          }
+          return;
+        }
+
+        const createPollButton = event.target.closest('[data-action="moderator-create-poll"]');
+        if (createPollButton) {
+          if (!moderatorAppState.ownerAccess) {
+            moderatorPollState.error = 'Owner access is required to create a poll.';
+            renderModeratorPollPanel();
+            return;
+          }
+
+          const questionInput = document.getElementById('moderator-poll-question');
+          const descriptionInput = document.getElementById('moderator-poll-description');
+          const diplomaInput = document.getElementById('moderator-poll-diploma');
+          const choiceInputs = Array.from(document.querySelectorAll('[data-moderator-create-choice]'));
+          const question = (questionInput?.value || '').trim();
+          const description = (descriptionInput?.value || '').trim();
+          const requiredDiploma = Boolean(diplomaInput?.checked);
+          const choices = choiceInputs
+            .map((input) => (input.value || '').trim())
+            .filter((value) => value.length > 0)
+            .filter((value, index, all) => all.indexOf(value) === index);
+
+          if (!question) {
+            moderatorPollState.error = 'A poll question is required.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+            return;
+          }
+
+          if (choices.length < 2) {
+            moderatorPollState.error = 'Add at least two valid answer choices before creating a draft poll.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+            return;
+          }
+
+          try {
+            moderatorPollState.loading = true;
+            moderatorPollState.error = null;
+            moderatorPollState.message = 'Creating draft poll…';
+            renderModeratorPollPanel();
+
+            const supabase = getAuthClient();
+            const { error } = await supabase.rpc('owner_create_poll', {
+              p_question: question,
+              p_description: description,
+              p_required_diploma: requiredDiploma,
+              p_options: choices,
+            });
+
+            if (error) {
+              throw error;
+            }
+
+            moderatorPollState.message = 'Draft poll created successfully.';
+            moderatorPollState.error = null;
+            await loadModeratorPollData();
+          } catch (error) {
+            console.error('Poll creation failed:', error);
+            moderatorPollState.error = error?.message || 'Unable to create the poll.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+          } finally {
+            moderatorPollState.loading = false;
+          }
+          return;
+        }
+
+        const refreshPollsButton = event.target.closest('[data-action="moderator-refresh-polls"]');
+        if (refreshPollsButton) {
+          await loadModeratorPollData();
+          return;
+        }
+
+        const editPollButton = event.target.closest('[data-action="moderator-edit-poll"]');
+        if (editPollButton) {
+          const pollId = editPollButton.getAttribute('data-poll-id');
+          if (!pollId) {
+            return;
+          }
+          moderatorPollState.editingPollId = pollId;
+          const poll = moderatorPollState.polls.find((item) => item.poll_id === pollId) || moderatorPollState.polls.find((item) => item.id === pollId);
+          if (poll) {
+            syncPollDraft(pollId, poll);
+          }
+          renderModeratorPollPanel();
+          return;
+        }
+
+        const cancelEditButton = event.target.closest('[data-action="moderator-cancel-edit-poll"]');
+        if (cancelEditButton) {
+          const pollId = cancelEditButton.getAttribute('data-poll-id');
+          if (!pollId) {
+            return;
+          }
+          moderatorPollState.editingPollId = null;
+          if (moderatorPollState.draftEdits[pollId]) {
+            delete moderatorPollState.draftEdits[pollId];
+          }
+          renderModeratorPollPanel();
+          return;
+        }
+
+        const addEditChoiceButton = event.target.closest('[data-action="moderator-add-edit-choice"]');
+        if (addEditChoiceButton) {
+          const pollId = addEditChoiceButton.getAttribute('data-poll-id');
+          if (!pollId) {
+            return;
+          }
+          const draft = moderatorPollState.draftEdits[pollId] || {
+            question: '',
+            description: '',
+            required_diploma: false,
+            options: [],
+          };
+          draft.options.push({ id: null, text: '', removed: false });
+          moderatorPollState.draftEdits[pollId] = draft;
+          moderatorPollState.editingPollId = pollId;
+          renderModeratorPollPanel();
+          return;
+        }
+
+        const deleteEditChoiceButton = event.target.closest('[data-action="moderator-delete-edit-choice"]');
+        if (deleteEditChoiceButton) {
+          const pollId = deleteEditChoiceButton.getAttribute('data-poll-id');
+          const optionIndex = Number(deleteEditChoiceButton.getAttribute('data-option-index'));
+          if (!pollId || Number.isNaN(optionIndex)) {
+            return;
+          }
+          const draft = moderatorPollState.draftEdits[pollId];
+          if (!draft) {
+            return;
+          }
+          const removedOption = draft.options[optionIndex];
+          if (removedOption && removedOption.id) {
+            draft.removedOptionIds = [...(draft.removedOptionIds || []), removedOption.id];
+          }
+          draft.options.splice(optionIndex, 1);
+          moderatorPollState.editingPollId = pollId;
+          renderModeratorPollPanel();
+          return;
+        }
+
+        const saveDraftPollButton = event.target.closest('[data-action="moderator-save-draft-poll"]');
+        if (saveDraftPollButton) {
+          const pollId = saveDraftPollButton.getAttribute('data-poll-id');
+          if (!pollId) {
+            return;
+          }
+
+          const draft = moderatorPollState.draftEdits[pollId];
+          if (!draft) {
+            return;
+          }
+
+          const questionInput = document.getElementById(`poll-edit-question-${pollId}`);
+          const descriptionInput = document.getElementById(`poll-edit-description-${pollId}`);
+          const diplomaInput = document.getElementById(`poll-edit-diploma-${pollId}`);
+          const choiceInputs = Array.from(document.querySelectorAll(`[data-poll-edit-choice="${pollId}"]`));
+          const question = (questionInput?.value || '').trim();
+          const description = (descriptionInput?.value || '').trim();
+          const requiredDiploma = Boolean(diplomaInput?.checked);
+          const choices = choiceInputs
+            .map((input) => ({
+              id: input.getAttribute('data-option-id') || null,
+              value: (input.value || '').trim(),
+            }))
+            .filter((entry) => entry.value.length > 0)
+            .filter((entry, index, all) => all.findIndex((candidate) => candidate.value === entry.value) === index);
+
+          if (!question) {
+            moderatorPollState.error = 'A poll question is required.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+            return;
+          }
+
+          if (choices.length < 2) {
+            moderatorPollState.error = 'A draft poll must contain at least two answer choices.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+            return;
+          }
+
+          try {
+            moderatorPollState.loading = true;
+            moderatorPollState.error = null;
+            moderatorPollState.message = 'Saving draft poll changes…';
+            renderModeratorPollPanel();
+
+            const supabase = getAuthClient();
+            const { error: updateError } = await supabase.rpc('owner_update_poll', {
+              p_poll_id: pollId,
+              p_question: question,
+              p_description: description,
+              p_required_diploma: requiredDiploma,
+            });
+
+            if (updateError) {
+              throw updateError;
+            }
+
+            const removedIds = draft.removedOptionIds || [];
+            for (const optionId of removedIds) {
+              const { error: deleteError } = await supabase.rpc('owner_delete_poll_option', {
+                p_option_id: optionId,
+              });
+              if (deleteError) {
+                throw deleteError;
+              }
+            }
+
+            for (const entry of choices) {
+              const optionId = entry.id || null;
+              const optionText = entry.value;
+              const { error: optionError } = await supabase.rpc('owner_upsert_poll_option', {
+                p_poll_id: pollId,
+                p_option_id: optionId,
+                p_option_text: optionText,
+              });
+              if (optionError) {
+                throw optionError;
+              }
+            }
+
+            moderatorPollState.message = 'Draft poll updated successfully.';
+            moderatorPollState.error = null;
+            moderatorPollState.editingPollId = null;
+            delete moderatorPollState.draftEdits[pollId];
+            await loadModeratorPollData();
+          } catch (error) {
+            console.error('Draft poll update failed:', error);
+            moderatorPollState.error = error?.message || 'Unable to update the draft poll.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+          } finally {
+            moderatorPollState.loading = false;
+          }
+          return;
+        }
+
+        const startPollButton = event.target.closest('[data-action="moderator-open-poll"]');
+        if (startPollButton) {
+          const pollId = startPollButton.getAttribute('data-poll-id');
+          if (!pollId) {
+            return;
+          }
+          try {
+            moderatorPollState.loading = true;
+            moderatorPollState.error = null;
+            moderatorPollState.message = 'Starting poll…';
+            renderModeratorPollPanel();
+            const supabase = getAuthClient();
+            const { error } = await supabase.rpc('owner_set_poll_status', {
+              p_poll_id: pollId,
+              p_status: 'open',
+            });
+            if (error) {
+              throw error;
+            }
+            moderatorPollState.message = 'Poll started successfully.';
+            await loadModeratorPollData();
+          } catch (error) {
+            console.error('Poll start failed:', error);
+            moderatorPollState.error = error?.message || 'Unable to start the poll.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+          } finally {
+            moderatorPollState.loading = false;
+          }
+          return;
+        }
+
+        const closePollButton = event.target.closest('[data-action="moderator-close-poll"]');
+        if (closePollButton) {
+          const pollId = closePollButton.getAttribute('data-poll-id');
+          if (!pollId) {
+            return;
+          }
+          try {
+            moderatorPollState.loading = true;
+            moderatorPollState.error = null;
+            moderatorPollState.message = 'Closing poll…';
+            renderModeratorPollPanel();
+            const supabase = getAuthClient();
+            const { error } = await supabase.rpc('owner_set_poll_status', {
+              p_poll_id: pollId,
+              p_status: 'closed',
+            });
+            if (error) {
+              throw error;
+            }
+            moderatorPollState.message = 'Poll closed successfully.';
+            await loadModeratorPollData();
+          } catch (error) {
+            console.error('Poll close failed:', error);
+            moderatorPollState.error = error?.message || 'Unable to close the poll.';
+            moderatorPollState.message = null;
+            renderModeratorPollPanel();
+          } finally {
+            moderatorPollState.loading = false;
+          }
+          return;
+        }
       });
     }
 
     loadModeratorQueueForApp();
+    refreshOwnerPanel();
     return;
   }
 
@@ -7349,16 +8149,11 @@ function renderAppContent(appId, mode = 'normal') {
   }
 
   if (appId === 'voting') {
-    body.innerHTML = `
-      <div class="news-card">
-        <div class="mylife-grid">
-          <div class="info-row"><span>Precinct</span><span>West Ward 17</span></div>
-          <div class="info-row"><span>Ballot status</span><span>Ready</span></div>
-          <div class="info-row"><span>Turnout</span><span>64%</span></div>
-          <div class="info-row"><span>Deadline</span><span>6:00 PM</span></div>
-        </div>
-      </div>
-    `;
+    renderVotingApp();
+    if (!votingState.loading) {
+      loadVotingData();
+    }
+    return;
   }
 
   if (appId === 'history') {
@@ -7387,9 +8182,9 @@ function renderAppContent(appId, mode = 'normal') {
 
 function openApp(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
-  const shouldRefreshModeratorApp = appId === 'moderator' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
+  const shouldRefreshApp = appId === 'moderator' || appId === 'voting' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
 
-  if (shouldRefreshModeratorApp) {
+  if (shouldRefreshApp) {
     renderAppContent(appId, mode);
     appWindow.dataset.initialized = 'true';
     appWindow.dataset.mode = mode;
