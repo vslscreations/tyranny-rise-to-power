@@ -1,0 +1,144 @@
+CYBERPUNK SKILL TREE & PROGRESSION NODES SYSTEM
+COMMERCIAL-USE LICENSE
+Version 1.0
+
+Copyright (c) 2026 Cyberpunk Skill Tree & Progression Nodes System.
+All rights reserved.
+
+This license is a legal agreement between the copyright holder ("Licensor") and the
+individual or entity that purchases or downloads the asset pack ("Licensee"). By using
+the files, the Licensee accepts these terms.
+
+1. DEFINITIONS
+
+1.1 "Asset Pack" means the Cyberpunk Skill Tree & Progression Nodes System version 1.0
+distribution, including all SVG files, PNG files, documentation, and any accompanying
+files supplied in the download.
+
+1.2 "Licensed Assets" means the individual artwork files contained in the Asset Pack,
+including the master SVG sheets, component SVGs, 2x PNG exports, 4x PNG exports, and
+component PNG exports.
+
+1.3 "Finished Product" means a game, application, website, video, presentation, or
+other digital product in which the Licensed Assets are integrated, modified, or
+combined with other content, and in which the Licensed Assets are not distributed as
+standalone source files.
+
+1.4 "Derivative Work" means a modified version of the Licensed Assets created by the
+Licensee, including recoloured, resized, cropped, recomposed, or otherwise adapted
+versions.
+
+2. GRANT OF LICENSE
+
+Subject to the terms of this license, the Licensor grants the Licensee a worldwide,
+perpetual, non-exclusive, royalty-free, non-transferable license to:
+
+(a) use the Licensed Assets for unlimited personal use;
+
+(b) use the Licensed Assets for unlimited commercial use in personal and commercial
+    game development projects;
+
+(c) modify, customize, recolor, resize, crop, recompose, and integrate the Licensed
+    Assets into games and other digital products;
+
+(d) use the Licensed Assets in commercial games, applications, and interactive
+    products;
+
+(e) distribute and display the Licensed Assets as integrated elements of a Finished
+    Product; and
+
+(f) use screenshots or recordings of a Finished Product containing the Licensed Assets
+    for promotion of that Finished Product.
+
+3. RESTRICTIONS
+
+The Licensee may NOT:
+
+(a) resell, license, sublicense, rent, lease, lend, share, or redistribute the Asset
+    Pack or any individual source file, in whole or in part, as a standalone asset;
+
+(b) redistribute the Licensed Assets as part of another asset pack, UI kit, template
+    pack, icon pack, graphics bundle, or similar product where the Licensed Assets are
+    the primary value;
+
+(c) make the Licensed Assets available for download, extraction, or reuse as raw SVG,
+    PNG, or other source files, including through public repositories, marketplaces,
+    file-sharing services, or shared drives;
+
+(d) claim that the original Licensed Assets were exclusively created by the Licensee,
+    or claim authorship of the original artwork;
+
+(e) register the Licensed Assets, or any confusingly similar copy, as a trademark,
+    logo, or design right; or
+
+(f) use the Licensed Assets in a way that is unlawful, defamatory, or that infringes
+    the rights of a third party.
+
+4. FINISHED PRODUCTS VS. RAW SOURCE FILES
+
+4.1 USING ASSETS IN A FINISHED PRODUCT IS PERMITTED. The Licensee may sell, publish, and
+distribute a game or application that contains the Licensed Assets as integrated
+artwork, including commercial games, prototypes, client projects, and applications.
+
+4.2 REDISTRIBUTING THE RAW SOURCE FILES IS NOT PERMITTED. The Licensee may not sell,
+share, publish, or otherwise make available the original or modified SVG files, PNG
+files, or the Asset Pack itself as downloadable assets, even if the files have been
+recoloured or renamed.
+
+4.3 A Finished Product must not be designed primarily as a vehicle for redistributing
+the Licensed Assets. If a product's primary purpose is to provide the artwork as
+reusable assets, it requires a separate written license from the Licensor.
+
+5. OWNERSHIP
+
+The Licensor retains all copyright, title, and interest in and to the original Licensed
+Assets. This license grants rights of use only; it does not transfer ownership or
+copyright. The Licensee owns the new content, code, and modifications that the Licensee
+independently creates, but the underlying original artwork remains the property of the
+Licensor.
+
+6. ATTRIBUTION
+
+Attribution is appreciated but not required. When crediting the pack, use:
+"Cyberpunk Skill Tree & Progression Nodes System".
+
+7. NO WARRANTY
+
+THE LICENSED ASSETS ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, TITLE, OR NON-INFRINGEMENT. THE LICENSOR DOES NOT WARRANT THAT THE
+ASSETS WILL MEET THE LICENSEE'S REQUIREMENTS OR THAT USE WILL BE UNINTERRUPTED OR
+ERROR-FREE.
+
+8. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR SHALL NOT BE LIABLE FOR ANY
+INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF
+PROFITS, DATA, OR BUSINESS OPPORTUNITY, ARISING FROM THE USE OF OR INABILITY TO USE THE
+LICENSED ASSETS, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. THE LICENSOR'S
+TOTAL LIABILITY UNDER THIS LICENSE SHALL NOT EXCEED THE AMOUNT PAID FOR THE ASSET PACK.
+
+9. TERMINATION
+
+This license terminates automatically if the Licensee breaches any term of this
+agreement. Upon termination, the Licensee must stop using the Licensed Assets and
+destroy all copies of the Asset Pack and raw source files. Finished Products that were
+lawfully published before termination may continue to be distributed, but the Licensee
+may not create or distribute new products using the Licensed Assets after termination.
+
+10. GENERAL
+
+10.1 This license is governed by the laws applicable in the Licensor's jurisdiction,
+without regard to conflict-of-law principles.
+
+10.2 If any provision of this license is held unenforceable, the remaining provisions
+remain in full force and effect.
+
+10.3 This license is the entire agreement concerning the Licensed Assets and supersedes
+any prior or contemporaneous understandings on the same subject.
+
+10.4 The Licensee may not assign or transfer this license without the Licensor's prior
+written consent.
+
+For licensing questions or permissions beyond the scope of this license, contact the
+seller through the product page.

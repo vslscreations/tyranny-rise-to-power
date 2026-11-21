@@ -15,6 +15,23 @@ const installZoomLock = () => {
 
   window.__tyrannyZoomLockInstalled = true;
 
+  const clampPageZoom = () => {
+    const root = document.documentElement;
+    const body = document.body;
+    if (root) {
+      root.style.zoom = '1';
+    }
+    if (body) {
+      body.style.zoom = '1';
+    }
+  };
+
+  clampPageZoom();
+  window.addEventListener('resize', clampPageZoom, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', clampPageZoom, { passive: true });
+  }
+
   const isTextEntryTarget = (target) => {
     if (!(target instanceof Element)) {
       return false;
@@ -76,6 +93,12 @@ const appCatalog = {
     icon: './images/icons/socialmedia.PNG',
     color: '#8bc4ff',
     unread: 1,
+  },
+  associates: {
+    name: 'Contacts',
+    icon: '☎',
+    color: '#7dc3ff',
+    unread: 0,
   },
   messages: {
     name: 'Messages',
@@ -226,6 +249,37 @@ const socialState = {
     error: null,
     requestToken: 0,
   },
+  currentCitizenHandle: null,
+  handleOnboarding: {
+    open: false,
+    checking: false,
+    draft: '',
+    busy: false,
+    error: null,
+    success: null,
+  },
+  chat: {
+    open: false,
+    loading: false,
+    hasLoaded: false,
+    messages: [],
+    onlineCount: 0,
+    error: null,
+    composerDraft: '',
+    sending: false,
+    channel: null,
+    reconnecting: false,
+  },
+};
+
+const associatesState = {
+  loading: false,
+  error: null,
+  friends: [],
+  enemies: [],
+  currentPickerTargetId: null,
+  currentPickerOpen: false,
+  pendingTargetId: null,
 };
 
 const messagesState = {
@@ -732,10 +786,29 @@ function formatSocialTimestamp(isoString) {
   return `${days}d`;
 }
 
+function normalizeHandleValue(value) {
+  const rawHandle = String(value ?? '').trim();
+  if (!rawHandle) {
+    return null;
+  }
+
+  const withoutAt = rawHandle.replace(/^@+/, '');
+  if (!/^[A-Za-z0-9_]{3,20}$/.test(withoutAt)) {
+    return null;
+  }
+
+  return `@${withoutAt.toLowerCase()}`;
+}
+
+function formatSocialHandle(value, fallback = '@citizen') {
+  return normalizeHandleValue(value) || fallback;
+}
+
 function normalizeSocialPostRecord(record) {
   const author = record?.author || {};
   const authorId = author?.id ?? record?.author_citizen_id ?? record?.authorCitizenId ?? null;
   const authorName = author?.public_name ?? record?.author_name ?? record?.author ?? 'Citizen';
+  const authorHandleValue = record?.author_handle ?? record?.handle ?? author?.handle ?? null;
   const authorAvatar = author?.avatar_url ?? record?.avatar_url ?? './assets/avatars/aurelia-voss.svg';
   const resolvedAvatar = builtInAvatarAssets.some((option) => option.url === authorAvatar)
     ? authorAvatar
@@ -745,7 +818,7 @@ function normalizeSocialPostRecord(record) {
     id: String(record?.id ?? `social-${Date.now()}`),
     authorCitizenId: authorId,
     author: String(authorName || 'Citizen'),
-    handle: '@' + String(authorName || 'citizen').toLowerCase().replace(/[^a-z0-9]+/g, ''),
+    handle: formatSocialHandle(authorHandleValue, '@citizen'),
     avatar: resolvedAvatar,
     content: String(record?.content ?? ''),
     createdAt: record?.created_at || new Date().toISOString(),
@@ -1177,6 +1250,101 @@ async function sendMessageInThread() {
     renderMessagesApp();
     return;
   }
+}
+
+function renderAssociatesApp() {
+  const body = document.querySelector('#app-associates .app-body');
+  if (!body) {
+    return;
+  }
+
+  const friends = Array.isArray(associatesState.friends) ? associatesState.friends : [];
+  const enemies = Array.isArray(associatesState.enemies) ? associatesState.enemies : [];
+
+  const friendMarkup = associatesState.loading
+    ? '<div class="mylife-alert"><span>Loading</span><p>Checking your associations…</p></div>'
+    : friends.length
+      ? friends.map((associate) => `
+          <button type="button" class="associate-item" data-social-action="open-citizen-profile" data-citizen-id="${escapeHtml(String(associate.citizenId || ''))}">
+            <div class="associate-avatar" style="background-image: url('${escapeHtml(associate.avatarUrl || './assets/avatars/aurelia-voss.svg')}')"></div>
+            <div class="associate-copy">
+              <strong>${escapeHtml(associate.publicName || 'Citizen')}</strong>
+              <span>${escapeHtml(associate.handle || '@citizen')}</span>
+              <small>${escapeHtml(associate.profession || 'Civilian')}</small>
+            </div>
+            <span class="associate-pill friend">Friend</span>
+          </button>
+        `).join('')
+      : '<div class="messages-empty-state"><strong>No friends yet.</strong><p>You have not marked any citizens as friends.</p></div>';
+
+  const enemyMarkup = associatesState.loading
+    ? '<div class="mylife-alert"><span>Loading</span><p>Checking your associations…</p></div>'
+    : enemies.length
+      ? enemies.map((associate) => `
+          <button type="button" class="associate-item" data-social-action="open-citizen-profile" data-citizen-id="${escapeHtml(String(associate.citizenId || ''))}">
+            <div class="associate-avatar" style="background-image: url('${escapeHtml(associate.avatarUrl || './assets/avatars/aurelia-voss.svg')}')"></div>
+            <div class="associate-copy">
+              <strong>${escapeHtml(associate.publicName || 'Citizen')}</strong>
+              <span>${escapeHtml(associate.handle || '@citizen')}</span>
+              <small>${escapeHtml(associate.profession || 'Civilian')}</small>
+            </div>
+            <span class="associate-pill enemy">Enemy</span>
+          </button>
+        `).join('')
+      : '<div class="messages-empty-state"><strong>No enemies yet.</strong><p>You have not marked any citizens as enemies.</p></div>';
+
+  body.innerHTML = `
+    <div class="associates-shell">
+      <div class="social-header">
+        <div>
+          <div class="section-kicker">Relationships</div>
+          <h3>Contacts</h3>
+        </div>
+        <button type="button" class="secondary-button" data-action="refresh-associates">Refresh</button>
+      </div>
+      ${associatesState.error ? `<div class="mylife-alert"><span>Contacts unavailable</span><p>${escapeHtml(associatesState.error)}</p></div>` : ''}
+      <div class="associates-grid">
+        <div class="associates-panel">
+          <div class="associates-panel-header">
+            <div>
+              <div class="section-kicker">Allies</div>
+              <h4>Friends</h4>
+            </div>
+            <span class="associate-count">${String(friends.length)}</span>
+          </div>
+          <div class="associates-list">${friendMarkup}</div>
+        </div>
+        <div class="associates-panel danger-panel">
+          <div class="associates-panel-header">
+            <div>
+              <div class="section-kicker">Threats</div>
+              <h4>Enemies</h4>
+            </div>
+            <span class="associate-count danger">${String(enemies.length)}</span>
+          </div>
+          <div class="associates-list">${enemyMarkup}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const refreshButton = body.querySelector('[data-action="refresh-associates"]');
+  refreshButton?.addEventListener('click', async () => {
+    await loadAssociatesApp();
+    renderAssociatesApp();
+  });
+
+  body.querySelectorAll('[data-social-action="open-citizen-profile"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const targetCitizenId = String(button.dataset.citizenId || '').trim();
+      if (!targetCitizenId) {
+        return;
+      }
+
+      openApp('social', 'normal');
+      await loadSocialProfileView(targetCitizenId);
+    });
+  });
 }
 
 function renderMessagesApp() {
@@ -1644,12 +1812,15 @@ async function loadSocialProfileView(targetCitizenId) {
       ? profileRow.posts.map((post) => normalizeSocialPostRecord(post))
       : [];
 
+    const relationshipStatus = await loadProfileRelationshipStatus(normalizedCitizenId);
+
     socialState.profileView = {
       ...socialState.profileView,
       loading: false,
       error: null,
       data: {
         ...profileRow,
+        relationship_type: relationshipStatus,
         posts: normalizedProfilePosts,
       },
     };
@@ -1681,6 +1852,169 @@ function getSafeAvatarUrl(url, fallback = './assets/avatars/aurelia-voss.svg') {
   }
 
   return fallback;
+}
+
+function normalizeAssociateListRecord(record) {
+  const citizenId = String(record?.citizen_id ?? record?.id ?? '').trim();
+  if (!citizenId) {
+    return null;
+  }
+
+  return {
+    citizenId,
+    publicName: String(record?.public_name || 'Citizen').trim() || 'Citizen',
+    handle: formatSocialHandle(record?.handle || record?.author_handle || '@citizen', '@citizen'),
+    avatarUrl: getSafeAvatarUrl(record?.avatar_url || './assets/avatars/aurelia-voss.svg'),
+    profession: String(record?.profession || 'Civilian').trim() || 'Civilian',
+    socialClass: String(record?.social_class || 'Unknown').trim() || 'Unknown',
+    relationshipType: String(record?.relationship_type || 'friend').trim().toLowerCase(),
+  };
+}
+
+async function loadAssociatesApp() {
+  const supabase = getAuthClient();
+  if (!supabase) {
+    associatesState.loading = false;
+    associatesState.error = 'Associates is unavailable because Supabase is not available.';
+    associatesState.friends = [];
+    associatesState.enemies = [];
+    return;
+  }
+
+  associatesState.loading = true;
+  associatesState.error = null;
+
+  try {
+    const [friendsResult, enemiesResult] = await Promise.all([
+      supabase.rpc('get_current_citizen_association_list', { p_relationship_type: 'friend' }),
+      supabase.rpc('get_current_citizen_association_list', { p_relationship_type: 'enemy' }),
+    ]);
+
+    if (friendsResult.error) {
+      throw friendsResult.error;
+    }
+
+    if (enemiesResult.error) {
+      throw enemiesResult.error;
+    }
+
+    associatesState.friends = Array.isArray(friendsResult.data)
+      ? friendsResult.data.map((row) => normalizeAssociateListRecord(row)).filter(Boolean)
+      : [];
+
+    associatesState.enemies = Array.isArray(enemiesResult.data)
+      ? enemiesResult.data.map((row) => normalizeAssociateListRecord(row)).filter(Boolean)
+      : [];
+  } catch (error) {
+    console.error('associates load failed', error);
+    associatesState.error = error?.message || 'Unable to load associates right now.';
+    associatesState.friends = [];
+    associatesState.enemies = [];
+  } finally {
+    associatesState.loading = false;
+  }
+}
+
+async function loadProfileRelationshipStatus(targetCitizenId) {
+  const supabase = getAuthClient();
+  const normalizedTarget = String(targetCitizenId || '').trim();
+  if (!supabase || !normalizedTarget) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('get_citizen_relationship_status', {
+      p_target_citizen_id: normalizedTarget,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+    const nextValue = String(row?.relationship_type || '').trim().toLowerCase();
+    return nextValue === 'friend' || nextValue === 'enemy' ? nextValue : null;
+  } catch (error) {
+    console.warn('relationship status lookup failed', error);
+    return null;
+  }
+}
+
+async function setCitizenRelationship(targetCitizenId, relationshipType) {
+  const supabase = getAuthClient();
+  const normalizedTarget = String(targetCitizenId || '').trim();
+  const normalizedType = String(relationshipType || '').trim().toLowerCase();
+
+  if (!supabase || !normalizedTarget || (normalizedType !== 'friend' && normalizedType !== 'enemy')) {
+    return false;
+  }
+
+  if (profileState.citizen?.id && normalizedTarget === String(profileState.citizen.id)) {
+    return false;
+  }
+
+  try {
+    const { error } = await supabase.rpc('set_citizen_relationship', {
+      p_target_citizen_id: normalizedTarget,
+      p_relationship_type: normalizedType,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (socialState.profileView?.active && String(socialState.profileView.targetCitizenId || '') === normalizedTarget) {
+      socialState.profileView.data = {
+        ...(socialState.profileView.data || {}),
+        relationship_type: normalizedType,
+      };
+    }
+
+    if (associatesState.currentPickerTargetId === normalizedTarget || activeAppId === 'associates') {
+      await loadAssociatesApp();
+      renderAssociatesApp();
+    }
+
+    return true;
+  } catch (error) {
+    console.error('set citizen relationship failed', error);
+    return false;
+  }
+}
+
+async function removeCitizenRelationship(targetCitizenId) {
+  const supabase = getAuthClient();
+  const normalizedTarget = String(targetCitizenId || '').trim();
+  if (!supabase || !normalizedTarget) {
+    return false;
+  }
+
+  try {
+    const { error } = await supabase.rpc('remove_citizen_relationship', {
+      p_target_citizen_id: normalizedTarget,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (socialState.profileView?.active && String(socialState.profileView.targetCitizenId || '') === normalizedTarget) {
+      socialState.profileView.data = {
+        ...(socialState.profileView.data || {}),
+        relationship_type: null,
+      };
+    }
+
+    if (associatesState.currentPickerTargetId === normalizedTarget || activeAppId === 'associates') {
+      await loadAssociatesApp();
+      renderAssociatesApp();
+    }
+
+    return true;
+  } catch (error) {
+    console.error('remove citizen relationship failed', error);
+    return false;
+  }
 }
 
 async function loadCommentsForPost(postId, appendOnly = false) {
@@ -1825,6 +2159,102 @@ async function loadSocialFeed(tabName = socialState.activeTab) {
       socialState.loading = false;
       renderSocialApp();
     }
+  }
+}
+
+async function ensureCurrentCitizenHandleStatus() {
+  const supabase = getAuthClient();
+  if (!supabase) {
+    return null;
+  }
+
+  socialState.handleOnboarding.checking = true;
+  renderSocialApp();
+
+  try {
+    const { data, error } = await supabase.rpc('get_current_citizen_social_handle');
+    if (error) {
+      throw error;
+    }
+
+    const nextValue = Array.isArray(data) ? (data[0] ?? null) : (data ?? null);
+    const nextHandle = normalizeHandleValue(nextValue);
+    socialState.currentCitizenHandle = nextHandle;
+    socialState.handleOnboarding.open = !nextHandle;
+    if (!nextHandle) {
+      socialState.handleOnboarding.draft = '';
+      socialState.handleOnboarding.error = null;
+      socialState.handleOnboarding.success = null;
+    }
+    return nextHandle;
+  } catch (error) {
+    console.error('social handle status check failed', error);
+    socialState.currentCitizenHandle = null;
+    socialState.handleOnboarding.open = true;
+    socialState.handleOnboarding.error = error?.message || 'Unable to confirm your handle right now.';
+    return null;
+  } finally {
+    socialState.handleOnboarding.checking = false;
+    renderSocialApp();
+  }
+}
+
+async function registerCitizenHandleFromOnboarding() {
+  const supabase = getAuthClient();
+  const draftedHandle = String(socialState.handleOnboarding.draft || '').trim();
+  const normalizedDraft = normalizeHandleValue(draftedHandle) || draftedHandle.replace(/^@+/, '').trim();
+
+  if (!supabase) {
+    socialState.handleOnboarding.error = 'Social media is unavailable because Supabase is not available.';
+    renderSocialApp();
+    return;
+  }
+
+  socialState.handleOnboarding.busy = true;
+  socialState.handleOnboarding.error = null;
+  socialState.handleOnboarding.success = null;
+  renderSocialApp();
+
+  try {
+    const { data: availabilityData, error: availabilityError } = await supabase.rpc('check_citizen_social_handle', {
+      p_handle: normalizedDraft,
+    });
+
+    if (availabilityError) {
+      throw availabilityError;
+    }
+
+    const availability = Array.isArray(availabilityData) ? (availabilityData[0] ?? null) : (availabilityData ?? null);
+    if (!availability?.is_available) {
+      socialState.handleOnboarding.error = availability?.message || 'That handle is not available.';
+      return;
+    }
+
+    const { data: registerData, error: registerError } = await supabase.rpc('register_citizen_social_handle', {
+      p_handle: availability.normalized_handle || normalizedDraft,
+    });
+
+    if (registerError) {
+      throw registerError;
+    }
+
+    const registration = Array.isArray(registerData) ? (registerData[0] ?? null) : (registerData ?? null);
+    if (!registration?.success) {
+      socialState.handleOnboarding.error = registration?.message || 'Unable to register your handle right now.';
+      return;
+    }
+
+    socialState.currentCitizenHandle = normalizeHandleValue(registration.handle) || `@${String(registration.handle || normalizedDraft).replace(/^@+/, '').trim().toLowerCase()}`;
+    socialState.handleOnboarding.open = false;
+    socialState.handleOnboarding.success = 'Your handle is live.';
+    socialState.handleOnboarding.draft = '';
+    await loadSocialFeed(socialState.activeTab);
+  } catch (error) {
+    console.error('social handle registration failed', error);
+    socialState.handleOnboarding.error = error?.message || 'Unable to register your handle right now.';
+  } finally {
+    socialState.handleOnboarding.busy = false;
+    renderSocialApp();
   }
 }
 
@@ -2099,7 +2529,7 @@ async function startProfileMessageAction(targetCitizenId, profileName, profileAv
     openMessageThread({
       threadId,
       partnerCitizenId: normalizedTargetCitizenId,
-      partnerName: String(profileName || 'Citizen').trim() || 'Citizen',
+      partnerName: String(profileName || '@citizen').trim() || '@citizen',
       avatar: getSafeAvatarUrl(profileAvatarUrl || './assets/avatars/aurelia-voss.svg'),
     });
   } catch (error) {
@@ -2110,9 +2540,262 @@ async function startProfileMessageAction(targetCitizenId, profileName, profileAv
   }
 }
 
+function normalizeSocialChatMessage(record) {
+  const id = String(record?.id ?? '');
+  const citizenId = record?.citizen_id ? String(record.citizen_id) : '';
+  const messageText = String(record?.message ?? '').trim();
+  if (!id || !citizenId || !messageText) {
+    return null;
+  }
+
+  const handleValue = record?.author_handle ?? record?.handle ?? null;
+  const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
+  const currentCitizenHandle = currentCitizenId && citizenId === currentCitizenId ? socialState.currentCitizenHandle : null;
+
+  return {
+    id,
+    citizenId,
+    handle: formatSocialHandle(handleValue || currentCitizenHandle || '@citizen', '@citizen'),
+    body: messageText,
+    createdAt: record?.created_at || new Date().toISOString(),
+  };
+}
+
+async function loadSocialChatMessages() {
+  const supabase = getAuthClient();
+  if (!supabase) {
+    socialState.chat.loading = false;
+    socialState.chat.error = 'Supabase is unavailable.';
+    socialState.chat.hasLoaded = true;
+    renderSocialApp();
+    return;
+  }
+
+  socialState.chat.loading = true;
+  socialState.chat.error = null;
+  renderSocialApp();
+
+  try {
+    const { data, error } = await supabase.rpc('get_recent_social_chat_messages', { p_limit: 100 });
+    if (error) {
+      throw error;
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    const parsedMessages = rows
+      .map((row) => normalizeSocialChatMessage(row))
+      .filter(Boolean);
+
+    socialState.chat.messages = parsedMessages.slice(-100);
+    socialState.chat.hasLoaded = true;
+    socialState.chat.error = null;
+  } catch (error) {
+    console.error('social chat load failed', error);
+    socialState.chat.error = error?.message || 'Unable to load the Social Chat room right now.';
+    socialState.chat.messages = [];
+  } finally {
+    socialState.chat.loading = false;
+    renderSocialApp();
+  }
+}
+
+function cleanupSocialChatRealtime() {
+  const supabase = getAuthClient();
+  if (!supabase || !socialState.chat.channel) {
+    return;
+  }
+
+  try {
+    supabase.removeChannel(socialState.chat.channel);
+  } catch (error) {
+    console.warn('Social chat realtime cleanup failed:', error);
+  }
+
+  socialState.chat.channel = null;
+}
+
+function ensureSocialChatRealtime() {
+  const supabase = getAuthClient();
+  if (!supabase || socialState.chat.channel) {
+    return;
+  }
+
+  const roomName = 'social_chat_public_room';
+  const channel = supabase.channel(roomName, {
+    config: {
+      presence: { key: roomName },
+    },
+  });
+
+  channel.on('presence', { event: 'sync' }, () => {
+    const state = channel.presenceState() || {};
+    socialState.chat.onlineCount = Object.keys(state).length;
+    renderSocialApp();
+  });
+
+  channel.on('postgres_changes', {
+    event: 'INSERT',
+    schema: 'public',
+    table: 'social_chat_messages',
+  }, (payload) => {
+    const row = payload?.new || null;
+    if (!row || row.deleted_at) {
+      return;
+    }
+
+    const incomingMessage = normalizeSocialChatMessage(row);
+    if (!incomingMessage) {
+      return;
+    }
+
+    const nextMessages = socialState.chat.messages.filter((message) => message.id !== incomingMessage.id);
+    nextMessages.push(incomingMessage);
+    socialState.chat.messages = nextMessages.slice(-100);
+    renderSocialApp();
+  });
+
+  channel.on('postgres_changes', {
+    event: 'UPDATE',
+    schema: 'public',
+    table: 'social_chat_messages',
+  }, (payload) => {
+    const row = payload?.new || null;
+    if (!row) {
+      return;
+    }
+
+    if (row.deleted_at) {
+      socialState.chat.messages = socialState.chat.messages.filter((message) => message.id !== String(row.id));
+      renderSocialApp();
+      return;
+    }
+
+    const updatedMessage = normalizeSocialChatMessage(row);
+    if (!updatedMessage) {
+      return;
+    }
+
+    const nextMessages = socialState.chat.messages.filter((message) => message.id !== updatedMessage.id);
+    nextMessages.push(updatedMessage);
+    socialState.chat.messages = nextMessages.slice(-100);
+    renderSocialApp();
+  });
+
+  channel.subscribe((status) => {
+    if (status === 'SUBSCRIBED') {
+      socialState.chat.reconnecting = false;
+      socialState.chat.error = null;
+      channel.track({ citizen_id: profileState.citizen?.id ?? null });
+      renderSocialApp();
+      return;
+    }
+
+    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      socialState.chat.reconnecting = true;
+      socialState.chat.error = 'Realtime connection lost. Reconnecting…';
+      renderSocialApp();
+    }
+  });
+
+  socialState.chat.channel = channel;
+}
+
+async function submitSocialChatMessage() {
+  const supabase = getAuthClient();
+  if (!supabase) {
+    socialState.chat.error = 'Supabase is unavailable.';
+    renderSocialApp();
+    return;
+  }
+
+  const trimmedMessage = String(socialState.chat.composerDraft || '').trim();
+  if (!trimmedMessage) {
+    socialState.chat.error = 'Write a message before sending.';
+    renderSocialApp();
+    return;
+  }
+
+  if (Array.from(trimmedMessage).length > 500) {
+    socialState.chat.error = 'Chat messages must be 500 characters or fewer.';
+    renderSocialApp();
+    return;
+  }
+
+  socialState.chat.sending = true;
+  socialState.chat.error = null;
+  renderSocialApp();
+
+  try {
+    const { data, error } = await supabase.rpc('send_social_chat_message', {
+      p_message: trimmedMessage,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    const nextMessage = normalizeSocialChatMessage({
+      id: result?.message_id || result?.id || null,
+      citizen_id: result?.citizen_id || profileState.citizen?.id || null,
+      author_handle: result?.author_handle || result?.handle || socialState.currentCitizenHandle || null,
+      message: result?.message || trimmedMessage,
+      created_at: result?.created_at || new Date().toISOString(),
+    });
+
+    if (nextMessage) {
+      const dedupedMessages = socialState.chat.messages.filter((message) => message.id !== nextMessage.id);
+      dedupedMessages.push(nextMessage);
+      socialState.chat.messages = dedupedMessages.slice(-100);
+    }
+
+    socialState.chat.composerDraft = '';
+    socialState.chat.error = null;
+  } catch (error) {
+    console.error('social chat send failed', error);
+    socialState.chat.error = error?.message || 'Unable to send the message right now.';
+  } finally {
+    socialState.chat.sending = false;
+    renderSocialApp();
+  }
+}
+
+async function removeSocialChatMessage(messageId) {
+  const supabase = getAuthClient();
+  if (!supabase || !messageId) {
+    return;
+  }
+
+  try {
+    const { error } = await supabase.rpc('remove_social_chat_message', {
+      p_message_id: messageId,
+      p_reason: null,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    socialState.chat.messages = socialState.chat.messages.filter((message) => message.id !== String(messageId));
+  } catch (error) {
+    console.error('social chat remove failed', error);
+    socialState.chat.error = error?.message || 'Unable to remove this message right now.';
+  } finally {
+    renderSocialApp();
+  }
+}
+
 function renderSocialApp() {
   const appWindow = ensureAppWindow('social');
   const body = appWindow.querySelector('.app-body');
+  if (socialState.chat.open) {
+    ensureSocialChatRealtime();
+    if (!socialState.chat.hasLoaded && !socialState.chat.loading) {
+      loadSocialChatMessages();
+    }
+  } else {
+    cleanupSocialChatRealtime();
+  }
   const profileView = socialState.profileView || {
     active: false,
     targetCitizenId: null,
@@ -2123,11 +2806,14 @@ function renderSocialApp() {
   };
 
   if (profileView.active) {
-    const profileHeading = profileView.loading
+    const profileDisplayName = profileView.loading
       ? 'Loading citizen profile…'
       : profileView.error
         ? 'Citizen profile unavailable'
-        : (profileView.data?.public_name || 'Citizen profile');
+        : (profileView.data?.public_name || 'Citizen');
+    const profileDisplayHandle = profileView.loading || profileView.error
+      ? '@citizen'
+      : formatSocialHandle(profileView.data?.handle || '@citizen', '@citizen');
     const profileAvatarUrl = getSafeAvatarUrl(profileView.data?.avatar_url || './assets/avatars/aurelia-voss.svg');
     const profilePosts = Array.isArray(profileView.data?.posts) ? profileView.data.posts : [];
     const registrationDate = profileView.data?.registration_date
@@ -2145,7 +2831,25 @@ function renderSocialApp() {
       ? 'Click to unfollow this citizen'
       : 'Follow this citizen';
     const profileMessageBusy = Boolean(profileTargetCitizenId && socialState.profileMessageBusyByCitizen[profileTargetCitizenId]);
+    const profileRelationship = String(profileView.data?.relationship_type || '').trim().toLowerCase();
+    const profileRelationshipLabel = profileRelationship === 'friend' ? 'Friend' : profileRelationship === 'enemy' ? 'Enemy' : 'Associate';
+    const associateMenuOpen = Boolean(profileTargetCitizenId && associatesState.currentPickerTargetId === profileTargetCitizenId && associatesState.currentPickerOpen);
     const profileHeaderActions = !isOwnProfile && profileTargetCitizenId && !profileView.loading && !profileView.error ? `
+      <div class="social-associate-wrap">
+        <button
+          type="button"
+          class="secondary-button social-associate-toggle"
+          data-associate-action="toggle-profile-association"
+          data-target-citizen-id="${escapeHtml(profileTargetCitizenId)}"
+        >${profileRelationshipLabel}</button>
+        ${associateMenuOpen ? `
+          <div class="social-associate-menu">
+            <button type="button" class="social-associate-choice" data-associate-action="set-association" data-target-citizen-id="${escapeHtml(profileTargetCitizenId)}" data-relationship-type="friend">Make Friend</button>
+            <button type="button" class="social-associate-choice" data-associate-action="set-association" data-target-citizen-id="${escapeHtml(profileTargetCitizenId)}" data-relationship-type="enemy">Make Enemy</button>
+            ${profileRelationship ? `<button type="button" class="social-associate-choice danger" data-associate-action="remove-association" data-target-citizen-id="${escapeHtml(profileTargetCitizenId)}">Remove relationship</button>` : ''}
+          </div>
+        ` : ''}
+      </div>
       <button
         type="button"
         class="secondary-button"
@@ -2200,7 +2904,8 @@ function renderSocialApp() {
               <div class="social-feed">
                 ${profilePosts.map((post) => {
                   const author = post?.author || {};
-                  const authorName = author.public_name || 'Citizen';
+                  const authorHandle = formatSocialHandle(post?.author_handle || author.handle || '@citizen', '@citizen');
+                  const authorCitizenId = String(post?.author_citizen_id ?? author?.citizen_id ?? author?.id ?? '');
                   const authorAvatar = getSafeAvatarUrl(author.avatar_url || './assets/avatars/aurelia-voss.svg');
                   const postId = String(post?.id ?? '');
                   const content = String(post?.content ?? '');
@@ -2211,13 +2916,20 @@ function renderSocialApp() {
                   return `
                     <article class="social-post" data-post-id="${escapeHtml(postId)}">
                       <div class="social-post-header">
-                        <div class="social-post-author">
+                        <button
+                          type="button"
+                          class="social-post-author social-author-button"
+                          data-social-action="open-citizen-profile"
+                          data-citizen-id="${escapeHtml(authorCitizenId)}"
+                          aria-label="Open ${escapeHtml(authorHandle)}'s profile"
+                          style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
+                        >
                           <div class="social-post-avatar" style="background-image: url('${escapeHtml(authorAvatar)}')"></div>
                           <div>
-                            <strong>${escapeHtml(authorName)}</strong>
-                            <span>@${escapeHtml(String(authorName).toLowerCase().replace(/\s+/g, ''))} · ${escapeHtml(createdAt)}</span>
+                            <strong>${escapeHtml(authorHandle)}</strong>
+                            <span>${escapeHtml(createdAt)}</span>
                           </div>
-                        </div>
+                        </button>
                       </div>
                       <p class="social-post-copy">${escapeHtml(content)}</p>
                       <div class="social-post-metrics">
@@ -2242,8 +2954,8 @@ function renderSocialApp() {
         <div class="social-profile-card">
           <div class="social-avatar" style="background-image: url('${escapeHtml(profileAvatarUrl)}')"></div>
           <div class="social-profile-copy">
-            <strong>${escapeHtml(profileHeading)}</strong>
-            <span>${escapeHtml(profileView.targetCitizenId ? `Citizen ${profileView.targetCitizenId}` : 'Citizen profile')}</span>
+            <strong>${escapeHtml(profileDisplayName)}</strong>
+            <span>${escapeHtml(profileDisplayHandle)} • Social profile</span>
           </div>
           <div class="social-profile-actions">
             ${profileHeaderActions}
@@ -2257,8 +2969,7 @@ function renderSocialApp() {
     return;
   }
 
-  const currentUserName = profileState.citizen?.public_name || player.name || 'Aurelia Voss';
-  const currentUserHandle = '@' + String(currentUserName).toLowerCase().replace(/\s+/g, '');
+  const currentUserHandle = socialState.currentCitizenHandle || formatSocialHandle(profileState.citizen?.handle || '@citizen', '@citizen');
   const rawCurrentUserAvatar = getCitizenAvatarUrl(profileState.citizen || null);
   const currentUserAvatar = rawCurrentUserAvatar && builtInAvatarAssets.some((option) => option.url === rawCurrentUserAvatar)
     ? rawCurrentUserAvatar
@@ -2280,6 +2991,31 @@ function renderSocialApp() {
   const selectedCommentComposerSuccess = selectedCommentId ? socialState.commentComposerSuccessByPost[selectedCommentId] || null : null;
   const selectedCommentDraftLength = Array.from(String(selectedCommentDraft || '')).length;
   const selectedCommentTrimmedLength = Array.from(String(selectedCommentDraft || '').replace(/^\s+|\s+$/g, '')).length;
+
+  const handleOnboardingMarkup = socialState.handleOnboarding.open || !socialState.currentCitizenHandle ? `
+    <div class="mylife-alert">
+      <span>Choose your handle</span>
+      <p>Set a permanent @handle before you can post in Social Media.</p>
+      <div class="social-handle-onboarding">
+        <input
+          type="text"
+          value="${escapeHtml(socialState.handleOnboarding.draft || '')}"
+          placeholder="@yourhandle"
+          maxlength="20"
+          data-social-handle-input
+          ${socialState.handleOnboarding.busy ? 'disabled aria-disabled="true"' : ''}
+        />
+        <button
+          type="button"
+          class="secondary-button"
+          data-social-action="register-handle"
+          ${socialState.handleOnboarding.busy ? 'disabled aria-disabled="true"' : ''}
+        >${socialState.handleOnboarding.busy ? 'Saving…' : 'Set handle'}</button>
+      </div>
+      ${socialState.handleOnboarding.error ? `<p class="social-composer-message social-composer-error">${escapeHtml(socialState.handleOnboarding.error)}</p>` : ''}
+      ${socialState.handleOnboarding.success ? `<p class="social-composer-message social-composer-success">${escapeHtml(socialState.handleOnboarding.success)}</p>` : ''}
+    </div>
+  ` : '';
 
   let feedMarkup = '';
 
@@ -2320,8 +3056,7 @@ function renderSocialApp() {
         const likeLabel = post.liked ? 'Liked' : 'Like';
         const postId = escapeHtml(String(post.id));
         const normalizedPostId = String(post.id ?? '');
-        const postAuthor = escapeHtml(post.author);
-        const postHandle = escapeHtml(post.handle);
+        const postHandle = escapeHtml(post.handle || '@citizen');
         const postContent = escapeHtml(post.content);
         const postAvatar = escapeHtml(post.avatar);
         const escapedAuthorCitizenId = escapeHtml(authorCitizenId);
@@ -2348,13 +3083,13 @@ function renderSocialApp() {
                 class="social-post-author social-author-button"
                 data-social-action="open-citizen-profile"
                 data-citizen-id="${escapedAuthorCitizenId}"
-                aria-label="Open ${postAuthor}'s profile"
+                aria-label="Open ${postHandle}'s profile"
                 style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
               >
                 <div class="social-post-avatar" style="background-image: url('${postAvatar}')"></div>
                 <div>
-                  <strong>${postAuthor}</strong>
-                  <span>${postHandle} · ${escapeHtml(formatSocialTimestamp(post.createdAt))}</span>
+                  <strong>${postHandle}</strong>
+                  <span>${escapeHtml(formatSocialTimestamp(post.createdAt))}</span>
                 </div>
               </button>
               <div class="social-post-header-actions">
@@ -2514,10 +3249,12 @@ function renderSocialApp() {
       <div class="social-profile-card">
         <div class="social-avatar" style="background-image: url('${escapeHtml(currentUserAvatar)}')"></div>
         <div class="social-profile-copy">
-          <strong>${escapeHtml(currentUserName)}</strong>
-          <span>${escapeHtml(currentUserHandle)}</span>
+          <strong>${escapeHtml(currentUserHandle)}</strong>
+          <span>Public profile</span>
         </div>
       </div>
+
+      ${handleOnboardingMarkup}
 
       <div class="social-search-box">
         <span>⌕</span>
@@ -2529,6 +3266,79 @@ function renderSocialApp() {
         <button type="button" class="social-tab ${socialState.activeTab === 'trending' ? 'active' : ''}" data-social-tab="trending">Trending</button>
         <button type="button" class="social-tab ${socialState.activeTab === 'latest' ? 'active' : ''}" data-social-tab="latest">Latest</button>
       </div>
+
+      <div class="social-chat-entry">
+        <button
+          type="button"
+          class="social-chat-toggle ${socialState.chat.open ? 'active' : ''}"
+          data-social-action="toggle-social-chat"
+          aria-expanded="${String(Boolean(socialState.chat.open))}"
+        >
+          <span class="social-chat-toggle-icon">◉</span>
+          <span>Social Chat</span>
+          <span class="social-chat-toggle-meta">${socialState.chat.onlineCount || 0} online</span>
+        </button>
+      </div>
+
+      ${socialState.chat.open ? `
+        <div class="social-chat-panel">
+          <div class="social-chat-header">
+            <div class="social-chat-status">
+              <span class="social-chat-live-dot"></span>
+              <span>Live room</span>
+            </div>
+            <strong>${socialState.chat.onlineCount || 0} online</strong>
+          </div>
+
+          <div class="social-chat-messages" aria-live="polite">
+            ${socialState.chat.loading
+              ? '<div class="social-chat-empty">Loading chat…</div>'
+              : socialState.chat.error
+                ? `<div class="social-chat-empty error">${escapeHtml(socialState.chat.error)}</div>`
+                : socialState.chat.messages.length
+                  ? socialState.chat.messages.map((message) => `
+                      <article class="social-chat-message" data-chat-message-id="${escapeHtml(message.id)}">
+                        <div class="social-chat-message-meta">
+                          <button
+                            type="button"
+                            class="social-author-button"
+                            data-social-action="open-citizen-profile"
+                            data-citizen-id="${escapeHtml(message.citizenId)}"
+                            aria-label="Open ${escapeHtml(message.handle)}'s profile"
+                          >${escapeHtml(message.handle)}</button>
+                          <span>${escapeHtml(formatSocialTimestamp(message.createdAt))}</span>
+                          ${message.citizenId && profileState.citizen?.id && String(message.citizenId) === String(profileState.citizen.id) ? `
+                            <button
+                              type="button"
+                              class="social-chat-remove"
+                              data-social-chat-remove="${escapeHtml(message.id)}"
+                              aria-label="Remove your chat message"
+                            >Remove</button>
+                          ` : ''}
+                        </div>
+                        <div class="social-chat-message-body">${escapeHtml(message.body)}</div>
+                      </article>
+                    `).join('')
+                  : '<div class="social-chat-empty">Nobody has started a message yet. Be the first to speak.</div>'}
+          </div>
+
+          <div class="social-chat-composer">
+            <textarea
+              rows="2"
+              aria-label="Write a message in Social Chat"
+              data-social-chat-input="true"
+              placeholder="Share an update with the city…"
+              ${socialState.chat.sending ? 'disabled aria-disabled="true"' : ''}
+            >${escapeHtml(socialState.chat.composerDraft)}</textarea>
+            <button
+              type="button"
+              class="social-action"
+              data-social-chat-send="true"
+              ${socialState.chat.sending || !String(socialState.chat.composerDraft || '').trim() ? 'disabled aria-disabled="true"' : ''}
+            >${socialState.chat.sending ? 'Sending...' : 'Send'}</button>
+          </div>
+        </div>
+      ` : ''}
 
       <form id="socialComposerForm" class="social-composer">
         <textarea
@@ -2577,7 +3387,8 @@ function renderSocialApp() {
                         .map((comment) => {
                           const commentId = String(comment.id ?? '');
                           const commentIdEscaped = escapeHtml(commentId);
-                          const commentAuthorName = escapeHtml(String(comment.author_public_name || 'Citizen'));
+                          const commentHandle = formatSocialHandle(comment.author_handle || comment.handle || '@citizen', '@citizen');
+                          const commentAuthorCitizenId = comment.author_citizen_id ? String(comment.author_citizen_id) : '';
                           const commentContent = String(comment.content || '');
                           const commentAvatarUrl = getSafeAvatarUrl(comment.author_avatar_url || comment.avatar_url);
                           const createdAt = comment.created_at ? formatSocialTimestamp(comment.created_at) : 'now';
@@ -2595,13 +3406,20 @@ function renderSocialApp() {
                             return `
                               <article class="social-comment-item" data-comment-id="${commentIdEscaped}">
                                 <div class="social-comment-header">
-                                  <div class="social-comment-author">
+                                  <button
+                                    type="button"
+                                    class="social-comment-author social-author-button"
+                                    data-social-action="open-citizen-profile"
+                                    data-citizen-id="${escapeHtml(commentAuthorCitizenId)}"
+                                    aria-label="Open ${escapeHtml(commentHandle)}'s profile"
+                                    style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
+                                  >
                                     <div class="social-comment-avatar" style="background-image: url('${escapeHtml(commentAvatarUrl)}')"></div>
                                     <div>
-                                      <strong>${commentAuthorName}</strong>
+                                      <strong>${escapeHtml(commentHandle)}</strong>
                                       <span>${escapeHtml(createdAt)}</span>
                                     </div>
-                                  </div>
+                                  </button>
                                 </div>
                                 <div class="social-comment-editor">
                                   <textarea
@@ -2639,13 +3457,20 @@ function renderSocialApp() {
                           return `
                             <article class="social-comment-item" data-comment-id="${commentIdEscaped}">
                               <div class="social-comment-header">
-                                <div class="social-comment-author">
+                                <button
+                                  type="button"
+                                  class="social-comment-author social-author-button"
+                                  data-social-action="open-citizen-profile"
+                                  data-citizen-id="${escapeHtml(commentAuthorCitizenId)}"
+                                  aria-label="Open ${escapeHtml(commentHandle)}'s profile"
+                                  style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
+                                >
                                   <div class="social-comment-avatar" style="background-image: url('${escapeHtml(commentAvatarUrl)}')"></div>
                                   <div>
-                                    <strong>${commentAuthorName}</strong>
+                                    <strong>${escapeHtml(commentHandle)}</strong>
                                     <span>${escapeHtml(createdAt)}</span>
                                   </div>
-                                </div>
+                                </button>
                                 ${isOwnComment ? `
                                   <div class="social-comment-actions">
                                     <button
@@ -2718,6 +3543,89 @@ function renderSocialApp() {
       await loadSocialFeed(nextTab);
     });
   });
+
+  const toggleChatButton = body.querySelector('[data-social-action="toggle-social-chat"]');
+  if (toggleChatButton) {
+    toggleChatButton.addEventListener('click', async () => {
+      socialState.chat.open = !socialState.chat.open;
+      if (socialState.chat.open && !socialState.chat.hasLoaded) {
+        await loadSocialChatMessages();
+      }
+      if (!socialState.chat.open) {
+        cleanupSocialChatRealtime();
+      }
+      renderSocialApp();
+    });
+  }
+
+  const chatInput = body.querySelector('[data-social-chat-input]');
+  if (chatInput) {
+    chatInput.value = socialState.chat.composerDraft;
+    chatInput.addEventListener('input', (event) => {
+      socialState.chat.composerDraft = String(event.target.value || '');
+      const sendButton = body.querySelector('[data-social-chat-send]');
+      if (sendButton) {
+        const isDisabled = socialState.chat.sending || !String(socialState.chat.composerDraft || '').trim();
+        sendButton.disabled = isDisabled;
+        sendButton.setAttribute('aria-disabled', String(isDisabled));
+      }
+    });
+    chatInput.addEventListener('keydown', async (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        await submitSocialChatMessage();
+      }
+    });
+  }
+
+  const chatSendButton = body.querySelector('[data-social-chat-send]');
+  if (chatSendButton) {
+    chatSendButton.addEventListener('click', async () => {
+      await submitSocialChatMessage();
+    });
+  }
+
+  const chatMessages = body.querySelector('.social-chat-messages');
+  if (chatMessages) {
+    requestAnimationFrame(() => {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+  }
+
+  const removeChatButtons = body.querySelectorAll('[data-social-chat-remove]');
+  if (removeChatButtons.length) {
+    removeChatButtons.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const messageId = String(button.dataset.socialChatRemove || '').trim();
+        if (!messageId) {
+          return;
+        }
+
+        await removeSocialChatMessage(messageId);
+      });
+    });
+  }
+
+  const handleInput = body.querySelector('[data-social-handle-input]');
+  const handleRegisterButton = body.querySelector('[data-social-action="register-handle"]');
+
+  if (handleInput) {
+    handleInput.addEventListener('input', (event) => {
+      socialState.handleOnboarding.draft = event.target.value;
+      if (socialState.handleOnboarding.error) {
+        socialState.handleOnboarding.error = null;
+      }
+      if (socialState.handleOnboarding.success) {
+        socialState.handleOnboarding.success = null;
+      }
+    });
+  }
+
+  if (handleRegisterButton) {
+    handleRegisterButton.addEventListener('click', () => {
+      registerCitizenHandleFromOnboarding();
+    });
+  }
 
   const confirmDeleteButtons = body.querySelectorAll('[data-social-action="delete-post"][data-confirm-delete="true"], [data-social-action="cancel-delete-post"]');
   if (confirmDeleteButtons.length) {
@@ -2831,6 +3739,20 @@ function renderSocialApp() {
   if (body && !body.dataset.profileViewNavigationBound) {
     body.dataset.profileViewNavigationBound = 'true';
     body.addEventListener('click', async (event) => {
+      const profileOpenButton = event.target.closest('[data-social-action="open-citizen-profile"]');
+      if (profileOpenButton) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const targetCitizenId = String(profileOpenButton.dataset.citizenId || '').trim();
+        if (!targetCitizenId) {
+          return;
+        }
+
+        await loadSocialProfileView(targetCitizenId);
+        return;
+      }
+
       const closeProfileButton = event.target.closest('[data-social-action="close-profile-view"]');
       if (closeProfileButton) {
         closeSocialProfileView();
@@ -2844,9 +3766,61 @@ function renderSocialApp() {
           return;
         }
 
-        const profileName = profileView.data?.public_name || 'Citizen';
+        const profileHandle = formatSocialHandle(profileView.data?.handle || '@citizen', '@citizen');
         const profileAvatarUrl = profileView.data?.avatar_url || './assets/avatars/aurelia-voss.svg';
-        await startProfileMessageAction(targetCitizenId, profileName, profileAvatarUrl);
+        await startProfileMessageAction(targetCitizenId, profileHandle, profileAvatarUrl);
+      }
+
+      const associateToggle = event.target.closest('[data-associate-action="toggle-profile-association"]');
+      if (associateToggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetCitizenId = String(associateToggle.dataset.targetCitizenId || '').trim();
+        if (!targetCitizenId) {
+          return;
+        }
+
+        const shouldOpen = !(associatesState.currentPickerTargetId === targetCitizenId && associatesState.currentPickerOpen);
+        associatesState.currentPickerTargetId = shouldOpen ? targetCitizenId : null;
+        associatesState.currentPickerOpen = shouldOpen;
+        renderSocialApp();
+        return;
+      }
+
+      const associateChoice = event.target.closest('[data-associate-action="set-association"]');
+      if (associateChoice) {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetCitizenId = String(associateChoice.dataset.targetCitizenId || '').trim();
+        const relationshipType = String(associateChoice.dataset.relationshipType || '').trim();
+        if (!targetCitizenId || !relationshipType) {
+          return;
+        }
+
+        const success = await setCitizenRelationship(targetCitizenId, relationshipType);
+        if (success) {
+          associatesState.currentPickerTargetId = null;
+          associatesState.currentPickerOpen = false;
+          await loadSocialProfileView(targetCitizenId);
+        }
+        return;
+      }
+
+      const removeAssociationButton = event.target.closest('[data-associate-action="remove-association"]');
+      if (removeAssociationButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetCitizenId = String(removeAssociationButton.dataset.targetCitizenId || '').trim();
+        if (!targetCitizenId) {
+          return;
+        }
+
+        const success = await removeCitizenRelationship(targetCitizenId);
+        if (success) {
+          associatesState.currentPickerTargetId = null;
+          associatesState.currentPickerOpen = false;
+          await loadSocialProfileView(targetCitizenId);
+        }
       }
     });
   }
@@ -2856,17 +3830,6 @@ function renderSocialApp() {
   if (socialFeed && !socialFeed.dataset.postEditDelegationBound) {
     socialFeed.dataset.postEditDelegationBound = 'true';
     socialFeed.addEventListener('click', async (event) => {
-      const profileOpenButton = event.target.closest('[data-social-action="open-citizen-profile"]');
-      if (profileOpenButton) {
-        const targetCitizenId = String(profileOpenButton.dataset.citizenId || '').trim();
-        if (!targetCitizenId) {
-          return;
-        }
-
-        await loadSocialProfileView(targetCitizenId);
-        return;
-      }
-
       const menuToggle = event.target.closest('[data-social-action="toggle-post-menu"]');
       if (menuToggle) {
         const postId = String(menuToggle.dataset.postId || '').trim();
@@ -3863,6 +4826,7 @@ async function refreshCitizenBalanceFromSupabase(citizenId) {
 function renderAppGrid() {
   const keys = Object.keys(appCatalog)
     .filter((appId) => appId !== 'messages')
+    .filter((appId) => appId !== 'associates')
     .filter((appId) => appId !== 'moderator' || moderatorAppState.visible);
   appGrid.innerHTML = keys
     .map((appId) => {
@@ -5999,14 +6963,333 @@ function renderVotingApp() {
   });
 }
 
+async function loadCareerPathInventory(citizenId, supabase = getAuthClient()) {
+  if (!supabase || !citizenId) {
+    return [];
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('citizen_inventory')
+      .select('item_name, quantity, is_active')
+      .eq('citizen_id', citizenId)
+      .eq('is_active', true);
+
+    if (error) {
+      throw error;
+    }
+
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.warn('Career path inventory load failed:', error);
+    return [];
+  }
+}
+
+function buildCareerPathTreeData(privateRecord = {}, inventoryItems = []) {
+  const education = String(privateRecord.education || '').trim();
+  const profession = String(privateRecord.profession || '').trim();
+  const inventoryNames = inventoryItems
+    .map((item) => String(item?.item_name || item?.name || item?.product_name || '').trim())
+    .filter(Boolean)
+    .map((name) => name.toLowerCase());
+
+  const hasDiploma = /high school diploma/i.test(education);
+  const hasLaptop = inventoryNames.some((name) => /laptop/i.test(name));
+  const hasCriminalHandbook = inventoryNames.some((name) => /criminal handbook/i.test(name));
+  const hasPoliticianRole = /politician|senator|assembly|campaign|mayor|council/i.test(profession);
+  const hasPublicRole = /public servant|civil servant|bureaucrat|government|administration/i.test(profession);
+  const hasCriminalRole = /criminal|smuggler|gangster|mob|bootlegger/i.test(profession);
+
+  const currentPath = hasPoliticianRole
+    ? 'Politician'
+    : hasPublicRole
+      ? 'Public Servant'
+      : hasCriminalRole
+        ? 'Criminal'
+        : 'Citizen';
+
+  const progressRows = [
+    {
+      label: 'Politician Path',
+      percent: hasDiploma ? 100 : 18,
+      color: '#34f29b',
+      value: hasDiploma ? '1 / 6' : '0 / 6',
+      labelText: hasDiploma ? 'Unlocked' : 'Locked',
+    },
+    {
+      label: 'Public Servant Path',
+      percent: hasDiploma ? 100 : 18,
+      color: '#39d0ff',
+      value: hasDiploma ? '1 / 6' : '0 / 6',
+      labelText: hasDiploma ? 'Unlocked' : 'Locked',
+    },
+    {
+      label: 'Criminal Path',
+      percent: hasDiploma ? 100 : 18,
+      color: '#ff5a78',
+      value: hasDiploma ? '1 / 6' : '0 / 6',
+      labelText: hasDiploma ? 'Unlocked' : 'Locked',
+    },
+  ];
+
+  return {
+    hasDiploma,
+    hasLaptop,
+    hasCriminalHandbook,
+    currentPath,
+    currentPathLabel: currentPath === 'Citizen' ? 'In Progress' : 'Current Path',
+    currentPathDetail: currentPath === 'Citizen'
+      ? 'You\'ve completed your HS Diploma. Keep meeting requirements to unlock your path.'
+      : `You\'re currently aligned with the ${currentPath} path. Keep meeting requirements to advance.`,
+    progressRows,
+  };
+}
+
+function getCareerPathTreeLayout(mode = 'desktop') {
+  if (mode === 'mobile') {
+    return {
+      width: 430,
+      height: 850,
+      headings: [
+        { id: 'politicianHeading', x: 82, y: 88, label: 'Politician', color: '#83f0bd' },
+        { id: 'publicHeading', x: 215, y: 88, label: 'Public Servant', color: '#86c9ff' },
+        { id: 'criminalHeading', x: 348, y: 88, label: 'Criminal', color: '#ff8397' },
+      ],
+      nodes: [
+        { id: 'citizen', x: 215, y: 760, radius: 34, label: 'Citizen', status: 'available' },
+        { id: 'diploma', x: 215, y: 610, radius: 30, label: 'HS Diploma', status: 'locked' },
+        { id: 'politicianFuture1', x: 82, y: 190, radius: 19, label: '?', status: 'unknown' },
+        { id: 'politicianFuture2', x: 82, y: 286, radius: 19, label: '?', status: 'unknown' },
+        { id: 'politicianReq', x: 82, y: 420, radius: 25, label: 'Laptop', status: 'locked' },
+        { id: 'publicFuture1', x: 215, y: 190, radius: 19, label: '?', status: 'unknown' },
+        { id: 'publicFuture2', x: 215, y: 286, radius: 19, label: '?', status: 'unknown' },
+        { id: 'publicReq', x: 215, y: 420, radius: 25, label: 'Laptop', status: 'locked' },
+        { id: 'criminalFuture1', x: 348, y: 190, radius: 19, label: '?', status: 'unknown' },
+        { id: 'criminalFuture2', x: 348, y: 286, radius: 19, label: '?', status: 'unknown' },
+        { id: 'criminalReq', x: 348, y: 420, radius: 25, label: 'Criminal Handbook', status: 'locked' },
+      ],
+      connectors: [
+        { from: 'citizen', to: 'diploma', color: '#f2d264' },
+        { from: 'diploma', to: 'politicianReq', color: '#7ae9b6' },
+        { from: 'diploma', to: 'publicReq', color: '#7fbefb' },
+        { from: 'diploma', to: 'criminalReq', color: '#ff7a8f' },
+        { from: 'politicianReq', to: 'politicianFuture1', color: '#7ae9b6' },
+        { from: 'politicianFuture1', to: 'politicianFuture2', color: '#7ae9b6' },
+        { from: 'publicReq', to: 'publicFuture1', color: '#7fbefb' },
+        { from: 'publicFuture1', to: 'publicFuture2', color: '#7fbefb' },
+        { from: 'criminalReq', to: 'criminalFuture1', color: '#ff7a8f' },
+        { from: 'criminalFuture1', to: 'criminalFuture2', color: '#ff7a8f' },
+      ],
+    };
+  }
+
+  return {
+    width: 760,
+    height: 880,
+    headings: [
+      { id: 'politicianHeading', x: 150, y: 95, label: 'Politician', color: '#83f0bd' },
+      { id: 'publicHeading', x: 380, y: 95, label: 'Public Servant', color: '#86c9ff' },
+      { id: 'criminalHeading', x: 610, y: 95, label: 'Criminal', color: '#ff8397' },
+    ],
+    nodes: [
+      { id: 'citizen', x: 380, y: 795, radius: 38, label: 'Citizen', status: 'available' },
+      { id: 'diploma', x: 380, y: 630, radius: 32, label: 'HS Diploma', status: 'locked' },
+      { id: 'politicianFuture1', x: 150, y: 205, radius: 22, label: '?', status: 'unknown' },
+      { id: 'politicianFuture2', x: 150, y: 320, radius: 22, label: '?', status: 'unknown' },
+      { id: 'politicianReq', x: 150, y: 475, radius: 28, label: 'Laptop', status: 'locked' },
+      { id: 'publicFuture1', x: 380, y: 205, radius: 22, label: '?', status: 'unknown' },
+      { id: 'publicFuture2', x: 380, y: 320, radius: 22, label: '?', status: 'unknown' },
+      { id: 'publicReq', x: 380, y: 475, radius: 28, label: 'Laptop', status: 'locked' },
+      { id: 'criminalFuture1', x: 610, y: 205, radius: 22, label: '?', status: 'unknown' },
+      { id: 'criminalFuture2', x: 610, y: 320, radius: 22, label: '?', status: 'unknown' },
+      { id: 'criminalReq', x: 610, y: 475, radius: 28, label: 'Criminal Handbook', status: 'locked' },
+    ],
+    connectors: [
+      { from: 'citizen', to: 'diploma', color: '#f2d264' },
+      { from: 'diploma', to: 'politicianReq', color: '#7ae9b6' },
+      { from: 'diploma', to: 'publicReq', color: '#7fbefb' },
+      { from: 'diploma', to: 'criminalReq', color: '#ff7a8f' },
+      { from: 'politicianReq', to: 'politicianFuture1', color: '#7ae9b6' },
+      { from: 'politicianFuture1', to: 'politicianFuture2', color: '#7ae9b6' },
+      { from: 'publicReq', to: 'publicFuture1', color: '#7fbefb' },
+      { from: 'publicFuture1', to: 'publicFuture2', color: '#7fbefb' },
+      { from: 'criminalReq', to: 'criminalFuture1', color: '#ff7a8f' },
+      { from: 'criminalFuture1', to: 'criminalFuture2', color: '#ff7a8f' },
+    ],
+  };
+}
+
+function renderCareerPathTreeMarkup(privateRecord = {}, inventoryItems = []) {
+  const state = buildCareerPathTreeData(privateRecord, inventoryItems);
+  const layoutMode = window.innerWidth <= 560 ? 'mobile' : 'desktop';
+  const layout = getCareerPathTreeLayout(layoutMode);
+
+  const nodeMap = new Map(layout.nodes.map((node) => {
+    let status = 'locked';
+    if (node.id === 'citizen') {
+      status = 'available';
+    } else if (node.id === 'diploma') {
+      status = state.hasDiploma ? 'completed' : 'locked';
+    } else if (node.id === 'politicianReq' || node.id === 'publicReq') {
+      status = state.hasLaptop ? 'completed' : 'locked';
+    } else if (node.id === 'criminalReq') {
+      status = state.hasCriminalHandbook ? 'completed' : 'locked';
+    } else if (node.id.endsWith('Future1') || node.id.endsWith('Future2')) {
+      status = 'unknown';
+    }
+
+    return [node.id, { ...node, status }];
+  }));
+
+  const connectorMarkup = layout.connectors.map((connector) => {
+    const from = nodeMap.get(connector.from);
+    const to = nodeMap.get(connector.to);
+    if (!from || !to) {
+      return '';
+    }
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const curve = `M ${from.x} ${from.y} Q ${from.x + dx * 0.5} ${from.y + dy * 0.5 - 20} ${to.x} ${to.y}`;
+    const connectorState = from.status === 'completed'
+      ? 'active'
+      : 'locked';
+    return `<path class="career-tree-connector status-${connectorState}" d="${curve}" stroke="${connector.color}" />`;
+  }).join('');
+
+  const headingsMarkup = layout.headings.map((heading) => `
+    <text class="career-tree-heading" x="${heading.x}" y="${heading.y}" text-anchor="middle" fill="${heading.color}">${escapeHtml(heading.label)}</text>
+  `).join('');
+
+  const nodeMarkup = layout.nodes.map((node) => {
+    const entry = nodeMap.get(node.id);
+    if (!entry) {
+      return '';
+    }
+
+    const branchClass = node.id.startsWith('politician')
+      ? 'branch-politician'
+      : node.id.startsWith('public')
+        ? 'branch-public'
+        : node.id.startsWith('criminal')
+          ? 'branch-criminal'
+          : node.id === 'citizen'
+            ? 'branch-citizen'
+            : node.id === 'diploma'
+              ? 'branch-diploma'
+              : '';
+
+    const isUnknown = entry.status === 'unknown';
+    const labelLines = entry.label.includes(' ') && entry.label.split(' ').length > 2
+      ? entry.label.split(' ')
+      : [entry.label];
+    const multilineText = labelLines.length > 1
+      ? labelLines.map((line, index) => `<tspan x="0" dy="${index === 0 ? 0 : 12}">${escapeHtml(line)}</tspan>`).join('')
+      : `<tspan x="0" dy="0">${escapeHtml(entry.label)}</tspan>`;
+
+    const qMarkMarkup = isUnknown
+      ? `<text x="0" y="0" class="career-node-question" text-anchor="middle" dominant-baseline="middle">?</text>`
+      : '';
+
+    const iconMarkup = node.id === 'politicianReq' || node.id === 'publicReq'
+      ? `
+        <g class="career-node-icon" transform="translate(-10 -18) scale(0.54)">
+          <rect x="4" y="6" width="16" height="10" rx="2" fill="none" stroke="${node.id.startsWith('politician') ? '#7ae9b6' : '#7fbefb'}" stroke-width="1.6"/>
+          <path d="M 7 18.5h10l2.5 2.5H4.5z" fill="none" stroke="${node.id.startsWith('politician') ? '#7ae9b6' : '#7fbefb'}" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M 9 9.5h6" stroke="${node.id.startsWith('politician') ? '#7ae9b6' : '#7fbefb'}" stroke-width="1.4" stroke-linecap="round"/>
+        </g>
+      `
+      : node.id === 'criminalReq'
+        ? `
+          <g class="career-node-icon" transform="translate(-10 -18) scale(0.52)">
+            <path d="M 7 6.5c1.2-1.2 3.2-1.9 5.1-1.9 2.4 0 4.7 1.1 5.9 3.1v10.2c-1.2-1.2-3-2-4.8-2.1-2.7-.2-5.4 1.3-6.5 3.7-.5 1.1-.7 2.3-.7 3.5H5.5c0-1.4.3-2.8.9-4.1 1.1-2.3 3.3-4 5.7-4.4-1.2-1.8-2-3.9-2-6.1z" fill="none" stroke="#ff7a8f" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M 9 8.5c2.3 0 4.3 1.2 5.2 3.1" fill="none" stroke="#ff7a8f" stroke-width="1.2" stroke-linecap="round"/>
+          </g>
+        `
+        : node.id === 'diploma'
+          ? `
+            <g class="career-node-icon" transform="translate(-10 -18) scale(0.5)">
+              <path d="M 4 12l8-5 8 5-8 5-8-5zm9 5v4M 10 18h4" fill="none" stroke="#f5d46d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </g>
+          `
+          : node.id === 'citizen'
+            ? `
+              <g class="career-node-icon" transform="translate(-9 -17) scale(0.5)">
+                <path d="M 5 16L 10 5l5 11-5 3z" fill="none" stroke="#6df3c8" stroke-width="1.8" stroke-linejoin="round"/>
+              </g>
+            `
+            : '';
+
+    const iconYOffset = iconMarkup ? 12 : 0;
+    const labelMarkup = isUnknown ? '' : `<text class="career-node-label" x="0" y="${iconYOffset}" text-anchor="middle" dominant-baseline="middle">${multilineText}</text>`;
+
+    return `
+      <g class="career-node ${branchClass} status-${entry.status}" transform="translate(${entry.x} ${entry.y})">
+        <circle class="career-node-aura" r="${entry.radius + 18}" />
+        <path class="career-node-ring" d="M 0 -${entry.radius + 8} L ${entry.radius + 8} 0 L 0 ${entry.radius + 8} L -${entry.radius + 8} 0 Z" />
+        <path class="career-node-body" d="M 0 -${entry.radius} L ${entry.radius * 0.72} -${entry.radius * 0.72} L ${entry.radius} 0 L ${entry.radius * 0.72} ${entry.radius * 0.72} L 0 ${entry.radius} L -${entry.radius * 0.72} ${entry.radius * 0.72} L -${entry.radius} 0 L -${entry.radius * 0.72} -${entry.radius * 0.72} Z" />
+        <path class="career-node-notch" d="M -${entry.radius - 5} 0 H -${entry.radius + 2} M ${entry.radius - 5} 0 H ${entry.radius + 2}" />
+        ${qMarkMarkup}
+        ${iconMarkup}
+        ${labelMarkup}
+      </g>
+    `;
+  }).join('');
+
+  return `
+    <div class="career-tree-overlay">
+      <button type="button" class="career-tree-close" data-action="career-tree-close" aria-label="Close career path">×</button>
+      <div class="career-tree-scroll" aria-label="Career path viewer">
+        <div class="career-tree-viewport" data-zoom="1">
+          <div class="career-path-shell">
+            <div class="career-path-panel">
+              <svg class="career-tree-svg" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="xMidYMid meet" aria-label="Career path tree">
+                <defs>
+                  <filter id="careerGlow">
+                    <feGaussianBlur stdDeviation="2.5" result="blur"></feGaussianBlur>
+                    <feMerge>
+                      <feMergeNode in="blur"></feMergeNode>
+                      <feMergeNode in="SourceGraphic"></feMergeNode>
+                    </feMerge>
+                  </filter>
+                </defs>
+                <rect x="0" y="0" width="${layout.width}" height="${layout.height}" class="career-path-background" rx="28" />
+                <g class="career-tree-asset-layer" aria-hidden="true">
+                  <image href="assets/skill%20tree%20asset%20pack.0/svg/components/03_circuit_connector_lattice.svg" x="${layout.width * 0.12}" y="${layout.height * 0.10}" width="${layout.width * 0.76}" height="${layout.height * 0.38}" preserveAspectRatio="xMidYMid slice" />
+                  <image class="career-tree-badge-decal" href="assets/skill%20tree%20asset%20pack.0/svg/components/01_branch_header_badges.svg" x="${layout.width * 0.05}" y="24" width="${layout.width * 0.26}" height="48" preserveAspectRatio="xMidYMin slice" />
+                  <image class="career-tree-badge-decal" href="assets/skill%20tree%20asset%20pack.0/svg/components/01_branch_header_badges.svg" x="${layout.width * 0.37}" y="24" width="${layout.width * 0.26}" height="48" preserveAspectRatio="xMidYMin slice" />
+                  <image class="career-tree-badge-decal" href="assets/skill%20tree%20asset%20pack.0/svg/components/01_branch_header_badges.svg" x="${layout.width * 0.69}" y="24" width="${layout.width * 0.26}" height="48" preserveAspectRatio="xMidYMin slice" />
+                </g>
+                ${connectorMarkup}
+                ${headingsMarkup}
+                ${nodeMarkup}
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderAppContent(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
   const body = appWindow.querySelector('.app-body');
 
   if (appId === 'social') {
     renderSocialApp();
+    ensureCurrentCitizenHandleStatus();
     if (!socialState.loading && socialState.activeTab) {
       loadSocialFeed(socialState.activeTab);
+    }
+    return;
+  }
+
+  if (appId === 'associates') {
+    renderAssociatesApp();
+    if (!associatesState.loading) {
+      loadAssociatesApp();
     }
     return;
   }
@@ -6105,9 +7388,9 @@ function renderAppContent(appId, mode = 'normal') {
     }
 
     const categoryCards = [
-      { key: 'career', title: 'Career', value: profession, icon: '◈', accent: '#5b7cff', description: 'Overview of current profession and work profile.' },
+      { key: 'career', title: 'Career', value: profession, icon: '◈', accent: '#5b7cff', description: 'Career path and work profile.' },
       { key: 'education', title: 'Education', value: education, icon: '◍', accent: '#2bb673', description: 'Education status and records.' },
-      { key: 'skills', title: 'Skills', value: 'Skill tree', icon: '✦', accent: '#eb8a4f', description: 'Current capabilities and development.' },
+      { key: 'skills', title: 'Career Path', value: 'Path overview', icon: '✦', accent: '#eb8a4f', description: 'Current progression and unlock pathway.' },
       { key: 'assets', title: 'Assets', value: 'Personal assets', icon: '▣', accent: '#9a6ef8', description: 'Personal holdings and resources.' },
     ];
 
@@ -6195,20 +7478,65 @@ function renderAppContent(appId, mode = 'normal') {
     }
 
     body.querySelectorAll('[data-category]').forEach((button) => {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', async () => {
         const category = button.dataset.category;
         if (!category) {
           return;
         }
 
         const categoryConfig = {
-          career: { title: 'Career', icon: '◈', accent: '#5b7cff', summary: 'Current profession and work profile', description: profession, empty: 'No career data is available yet.' },
+          career: { title: 'Career', icon: '◈', accent: '#5b7cff', summary: 'Career path overview', description: profession, empty: 'No career data is available yet.', isTree: true },
           education: { title: 'Education', icon: '◍', accent: '#2bb673', summary: 'Education status', description: education, empty: 'No education records are available yet.' },
-          skills: { title: 'Skills', icon: '✦', accent: '#eb8a4f', summary: 'Skill tree', description: 'Skill progression is not active in this beta.', empty: 'No skill records are available yet.' },
+          skills: { title: 'Career Path', icon: '✦', accent: '#eb8a4f', summary: 'Career path tree', description: 'Current progression and unlock pathway.', empty: 'No career path data is available yet.', isTree: true },
           assets: { title: 'Assets', icon: '▣', accent: '#9a6ef8', summary: 'Personal assets', description: 'No personal asset system is active yet.', empty: 'No asset information is available yet.' },
         };
 
         const config = categoryConfig[category] || categoryConfig.career;
+
+        if (config.isTree) {
+          const supabase = getAuthClient();
+          const inventory = await loadCareerPathInventory(profileState.citizen?.id || null, supabase);
+          const treeMarkup = renderCareerPathTreeMarkup(privateRecord, inventory);
+
+          body.innerHTML = `
+            <div class="mylife-shell mylife-detail-shell">
+              <div class="mylife-detail-top">
+                <button type="button" class="mylife-back-button" data-action="mylife-back">‹ MyLife</button>
+                <div class="mylife-detail-title-wrap">
+                  <span class="mylife-detail-icon" style="background:${config.accent};">${config.icon}</span>
+                  <div>
+                    <div class="section-kicker">My life</div>
+                    <h3>${config.title}</h3>
+                  </div>
+                </div>
+              </div>
+
+              ${treeMarkup}
+            </div>
+          `;
+
+          body.querySelector('[data-action="mylife-back"]').addEventListener('click', () => {
+            renderAppContent('mylife');
+          });
+
+          const closeButton = body.querySelector('[data-action="career-tree-close"]');
+          const zoomViewport = body.querySelector('.career-tree-viewport');
+
+          if (closeButton) {
+            closeButton.addEventListener('click', () => {
+              renderAppContent('mylife');
+            });
+          }
+
+          if (zoomViewport) {
+            zoomViewport.style.transform = 'scale(1)';
+            zoomViewport.dataset.zoom = '1';
+            zoomViewport.onwheel = null;
+          }
+
+          return;
+        }
+
         const detailRows = [
           ['Citizen', displayName],
           ['Profession', profession],
@@ -6334,6 +7662,15 @@ function renderAppContent(appId, mode = 'normal') {
       }
 
       return `moneytree-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    };
+
+    const countMoneytreeWords = (value) => {
+      const normalized = String(value ?? '').trim();
+      if (!normalized) {
+        return 0;
+      }
+
+      return normalized.split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
     };
 
     const loadActiveDiscussions = async () => {
@@ -6467,6 +7804,7 @@ function renderAppContent(appId, mode = 'normal') {
           <div class="moneytree-discussion-form moneytree-inline-challenge-form">
             <label class="moneytree-discussion-label" for="moneytree-challenge-input">Challenge response</label>
             <textarea id="moneytree-challenge-input" rows="5" placeholder="Write your challenge here...">${escapeHtml(moneytreeState.challengeDraft)}</textarea>
+            <div class="moneytree-discussion-meta">25-word minimum required</div>
             <button type="button" class="moneytree-submit-button" data-action="moneytree-submit-challenge" ${moneytreeState.submitting ? 'disabled' : ''}>
               ${moneytreeState.submitting ? 'Submitting…' : 'Submit challenge'}
             </button>
@@ -6548,6 +7886,7 @@ function renderAppContent(appId, mode = 'normal') {
           <div class="moneytree-discussion-form moneytree-inline-challenge-form">
             <label class="moneytree-discussion-label" for="moneytree-challenge-input">Challenge response</label>
             <textarea id="moneytree-challenge-input" rows="5" placeholder="Write your challenge here...">${escapeHtml(moneytreeState.challengeDraft)}</textarea>
+            <div class="moneytree-discussion-meta">25-word minimum required</div>
             <button type="button" class="moneytree-submit-button" data-action="moneytree-submit-challenge" ${moneytreeState.submitting ? 'disabled' : ''}>
               ${moneytreeState.submitting ? 'Submitting…' : 'Submit challenge'}
             </button>
@@ -6840,8 +8179,18 @@ function renderAppContent(appId, mode = 'normal') {
         return;
       }
 
-      const currentStatus = moneytreeState.clockInStatus;
-      if (!currentStatus || !currentStatus.can_claim || moneytreeState.clockInSubmitting) {
+      let currentStatus = moneytreeState.clockInStatus;
+      if (!currentStatus || (!currentStatus.window_is_open && !currentStatus.can_claim && !currentStatus.already_claimed)) {
+        currentStatus = await loadClockInStatus();
+      }
+
+      const clockWindowOpen = Boolean(
+        (currentStatus?.window_is_open || currentStatus?.can_claim || Number(currentStatus?.remaining_seconds ?? 0) > 0)
+        && !currentStatus?.already_claimed
+      );
+
+      if (!currentStatus || !clockWindowOpen || moneytreeState.clockInSubmitting) {
+        moneytreeState.clockInNotice = currentStatus?.message || 'Clock In is not available right now.';
         return;
       }
 
@@ -6893,7 +8242,10 @@ function renderAppContent(appId, mode = 'normal') {
         ? new Date(new Date(clockInStatus.server_now).getTime() + (Date.now() - clockInStatus.fetchedAtMs))
         : new Date();
 
-      const clockInWindowActive = Boolean(clockInStatus?.window_is_open && clockInStatus?.can_claim && !clockInStatus?.already_claimed);
+      const clockInWindowActive = Boolean(
+        (clockInStatus?.window_is_open || clockInStatus?.can_claim || Number(clockInStatus?.remaining_seconds ?? 0) > 0)
+        && !clockInStatus?.already_claimed
+      );
       const clockInButtonDisabled = !clockInWindowActive || moneytreeState.clockInSubmitting;
       const remainingSeconds = clockInWindowActive && clockInStatus?.window_end
         ? Math.max(0, Math.ceil((new Date(clockInStatus.window_end).getTime() - effectiveNow.getTime()) / 1000))
@@ -7066,6 +8418,7 @@ function renderAppContent(appId, mode = 'normal') {
                 <div class="moneytree-discussion-form">
                   <label class="moneytree-discussion-label" for="moneytree-answer-input">Your answer</label>
                   <textarea id="moneytree-answer-input" rows="7" placeholder="Write your answer here...">${escapeHtml(moneytreeState.submitDraft)}</textarea>
+                  <div class="moneytree-discussion-meta">25-word minimum required</div>
                   ${moneytreeState.submitError ? `<div class="moneytree-discussion-message error">${escapeHtml(moneytreeState.submitError)}</div>` : ''}
                   ${moneytreeState.submitSuccess ? `<div class="moneytree-discussion-message success">${escapeHtml(moneytreeState.submitSuccess)}</div>` : ''}
                   <button type="button" class="moneytree-submit-button" data-action="moneytree-submit-answer" ${moneytreeState.submitting ? 'disabled' : ''}>
@@ -7265,6 +8618,17 @@ function renderAppContent(appId, mode = 'normal') {
               : 'Please enter your answer before submitting.';
             moneytreeState.submitSuccess = null;
             moneytreeState[draftStateKey] = '';
+            renderDashboard(dashboard, activeDiscussions);
+            return;
+          }
+
+          const answerWordCount = countMoneytreeWords(trimmedAnswer);
+          if (answerWordCount < 25) {
+            moneytreeState.submitError = isChallenge
+              ? 'Challenge responses must contain at least 25 words.'
+              : 'Responses must contain at least 25 words.';
+            moneytreeState.submitSuccess = null;
+            moneytreeState[draftStateKey] = trimmedAnswer;
             renderDashboard(dashboard, activeDiscussions);
             return;
           }
@@ -10334,6 +11698,11 @@ function initializePhone() {
   document.getElementById('dockMessages').addEventListener('click', () => {
     closeSettingsMenu();
     openApp('messages', 'normal');
+  });
+
+  document.getElementById('dockContacts').addEventListener('click', () => {
+    closeSettingsMenu();
+    openApp('associates', 'normal');
   });
 
   document.getElementById('dockSettings').addEventListener('click', () => {

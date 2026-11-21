@@ -182,8 +182,10 @@ serve(async (req) => {
 
     const { data: discussions, error: discussionError } = await adminClient
       .from('moneytree_discussions')
-      .select('id, discussion_type, title, prompt, profession_gate, created_at')
+      .select('id, discussion_type, title, prompt, profession_gate, created_at, question_category, question_category_priority, sort_order')
       .eq('is_active', true)
+      .order('question_category_priority', { ascending: true })
+      .order('sort_order', { ascending: true })
       .order('created_at', { ascending: false });
 
     if (discussionError) {

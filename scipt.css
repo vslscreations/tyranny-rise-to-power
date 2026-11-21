@@ -1204,6 +1204,178 @@ button {
   font-weight: 700;
 }
 
+.social-chat-entry {
+  display: flex;
+  width: 100%;
+}
+
+.social-chat-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(18, 36, 59, 0.06);
+  color: #162537;
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 0.77rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.social-chat-toggle.active {
+  background: rgba(27, 78, 131, 0.08);
+  border-color: rgba(27, 78, 131, 0.18);
+}
+
+.social-chat-toggle-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  color: #2d8b57;
+}
+
+.social-chat-toggle-meta {
+  color: rgba(22, 37, 55, 0.7);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.social-chat-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 18px;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
+}
+
+.social-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+  color: #1f2e3d;
+  font-size: 0.72rem;
+}
+
+.social-chat-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.social-chat-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2fbf71;
+  box-shadow: 0 0 0 4px rgba(47, 191, 113, 0.16);
+}
+
+.social-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: clamp(220px, 32vh, 360px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.social-chat-message {
+  display: grid;
+  gap: 6px;
+  padding: 10px 10px 8px;
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 12px;
+  background: rgba(247, 250, 252, 0.9);
+}
+
+.social-chat-message-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: rgba(24, 37, 52, 0.68);
+  font-size: 0.66rem;
+}
+
+.social-author-button {
+  border: none;
+  background: transparent;
+  color: #1f2e3d;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.social-author-button:hover,
+.social-author-button:focus-visible {
+  color: #0f5e7d;
+  text-decoration: underline;
+  outline: none;
+}
+
+.social-chat-remove {
+  margin-left: auto;
+  border: 1px solid rgba(101, 117, 133, 0.2);
+  background: rgba(255, 255, 255, 0.7);
+  color: #5f2c2c;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.social-chat-message-body {
+  color: #1d2a39;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.social-chat-empty {
+  padding: 12px 8px;
+  color: rgba(26, 38, 52, 0.72);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.social-chat-empty.error {
+  color: #9d2c2c;
+}
+
+.social-chat-composer {
+  display: grid;
+  gap: 8px;
+}
+
+.social-chat-composer textarea {
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1c2a39;
+  padding: 10px 12px;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.social-chat-composer .social-action {
+  justify-self: flex-end;
+  min-width: 120px;
+}
+
 .social-feed {
   display: flex;
   flex-direction: column;
@@ -1346,6 +1518,180 @@ button {
   background: rgba(32, 80, 52, 0.08);
   color: #1d5a3b;
   border-color: rgba(29, 90, 59, 0.2);
+}
+
+.social-associate-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.social-associate-toggle {
+  min-width: 96px;
+}
+
+.social-associate-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  padding: 8px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.96);
+  box-shadow: 0 16px 34px rgba(8, 12, 18, 0.28);
+  z-index: 30;
+}
+
+.social-associate-choice {
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #edf4ff;
+  text-align: left;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.social-associate-choice:hover,
+.social-associate-choice:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.social-associate-choice.danger {
+  color: #ffd0d0;
+}
+
+.associates-shell {
+  display: grid;
+  gap: 16px;
+  min-height: 100%;
+  padding: 16px 14px 20px;
+  background: linear-gradient(180deg, #f5f7fb 0%, #eef2f8 100%);
+}
+
+.associates-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.associates-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+}
+
+.danger-panel {
+  border-color: rgba(130, 31, 31, 0.16);
+}
+
+.associates-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.associates-panel-header h4 {
+  margin: 2px 0 0;
+  color: #1d2a39;
+  font-size: 0.96rem;
+}
+
+.associate-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(18, 86, 135, 0.12);
+  color: #1c3f67;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.associate-count.danger {
+  background: rgba(128, 40, 40, 0.12);
+  color: #7a2a2a;
+}
+
+.associates-list {
+  display: grid;
+  gap: 8px;
+}
+
+.associate-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid rgba(17, 24, 39, 0.07);
+  background: rgba(247, 250, 252, 0.95);
+  border-radius: 14px;
+  padding: 10px 12px;
+  text-align: left;
+  color: #1d2a39;
+  cursor: pointer;
+}
+
+.associate-avatar {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-size: cover;
+  background-position: center;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+.associate-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.associate-copy strong {
+  color: #1b2736;
+  font-size: 0.82rem;
+}
+
+.associate-copy span,
+.associate-copy small {
+  color: rgba(25, 36, 49, 0.68);
+  font-size: 0.66rem;
+}
+
+.associate-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  border-radius: 999px;
+  padding: 6px 8px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.associate-pill.friend {
+  background: rgba(26, 117, 72, 0.12);
+  color: #1a6044;
+}
+
+.associate-pill.enemy {
+  background: rgba(126, 39, 39, 0.12);
+  color: #7f3030;
 }
 
 .social-post-copy {
@@ -1674,6 +2020,586 @@ button {
   font-size: 0.76rem;
   line-height: 1.6;
   color: rgba(28, 36, 48, 0.7);
+}
+
+.career-tree-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background:
+    radial-gradient(ellipse at 50% 85%, rgba(74, 232, 159, 0.11), transparent 28%),
+    radial-gradient(circle at 50% 10%, rgba(87, 164, 255, 0.09), transparent 26%),
+    linear-gradient(180deg, #060b12 0%, #080e17 58%, #04070c 100%);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+.career-tree-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 22px 18px 18px;
+  box-sizing: border-box;
+  scroll-behavior: smooth;
+  touch-action: pan-y;
+}
+
+.career-tree-viewport {
+  width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  transform-origin: center center;
+  transition: transform 0.18s ease;
+}
+
+.career-path-shell {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+.career-path-panel {
+  width: 100%;
+}
+
+.career-tree-svg {
+  display: block;
+  width: min(100%, 900px);
+  height: auto;
+  max-height: 88vh;
+  margin: 0 auto;
+  background:
+    radial-gradient(circle at 50% 80%, rgba(90, 240, 168, 0.07), transparent 23%),
+    linear-gradient(180deg, rgba(8, 15, 25, 0.98), rgba(5, 9, 15, 0.99));
+  border-radius: 24px;
+  border: 1px solid rgba(139, 174, 211, 0.22);
+  box-shadow:
+    inset 0 0 82px rgba(87, 174, 255, 0.06),
+    inset 0 -50px 80px rgba(30, 220, 126, 0.04),
+    0 26px 76px rgba(0, 0, 0, 0.65),
+    0 0 35px rgba(94, 164, 255, 0.07);
+}
+
+.career-tree-close {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 40;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 50%;
+  background: rgba(16, 20, 28, 0.9);
+  color: rgba(255,255,255,0.9);
+  font-size: 1.45rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+}
+
+.career-tree-close:focus-visible {
+  outline: 2px solid rgba(0, 240, 255, 0.9);
+  outline-offset: 2px;
+}
+
+.career-tree-heading {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.95;
+  paint-order: stroke;
+  stroke: rgba(10, 12, 18, 0.42);
+  stroke-width: 0.8px;
+}
+
+.career-path-background {
+  fill: rgba(6, 12, 20, 0.94);
+  stroke: rgba(159, 191, 225, 0.18);
+  stroke-width: 1.2;
+}
+
+.career-tree-connector {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: none;
+  stroke-width: 2.1;
+}
+
+.career-tree-connector.status-locked {
+  opacity: 0.15;
+  stroke-dasharray: 3 7;
+}
+
+.career-tree-connector.status-active {
+  opacity: 0.78;
+  filter: url(#careerGlow);
+}
+
+.career-node {
+  filter: drop-shadow(0 12px 20px rgba(0,0,0,0.38));
+}
+
+.career-node-aura { fill: transparent; }
+
+.career-node-ring {
+  fill: rgba(255,255,255,0.015);
+  stroke: rgba(180, 199, 220, 0.22);
+  stroke-width: 1.15;
+}
+
+.career-node-body {
+  stroke-width: 1.7;
+  stroke: rgba(176, 195, 216, 0.42);
+}
+
+.career-node-notch { fill: none; stroke: currentColor; stroke-width: 1.3; opacity: 0.65; }
+
+.career-tree-asset-layer { opacity: 0.16; pointer-events: none; mix-blend-mode: screen; }
+.career-tree-badge-decal { opacity: 0.7; }
+
+.career-node.branch-politician .career-node-ring {
+  stroke: rgba(100, 255, 175, 0.26);
+}
+
+.career-node.branch-public .career-node-ring {
+  stroke: rgba(110, 189, 255, 0.26);
+}
+
+.career-node.branch-criminal .career-node-ring {
+  stroke: rgba(255, 117, 147, 0.26);
+}
+
+.career-node.branch-citizen .career-node-ring,
+.career-node.branch-diploma .career-node-ring {
+  stroke: rgba(176, 195, 216, 0.22);
+}
+
+.career-node.branch-politician.status-locked .career-node-body,
+.career-node.branch-politician.status-available .career-node-body,
+.career-node.branch-politician.status-completed .career-node-body {
+  fill: rgba(9, 20, 18, 0.9);
+  stroke: rgba(104, 255, 181, 0.34);
+}
+
+.career-node.branch-public.status-locked .career-node-body,
+.career-node.branch-public.status-available .career-node-body,
+.career-node.branch-public.status-completed .career-node-body {
+  fill: rgba(8, 18, 29, 0.9);
+  stroke: rgba(92, 180, 255, 0.34);
+}
+
+.career-node.branch-criminal.status-locked .career-node-body,
+.career-node.branch-criminal.status-available .career-node-body,
+.career-node.branch-criminal.status-completed .career-node-body {
+  fill: rgba(27, 12, 18, 0.9);
+  stroke: rgba(255, 114, 143, 0.34);
+}
+
+.career-node.branch-citizen.status-locked .career-node-body,
+.career-node.branch-citizen.status-available .career-node-body,
+.career-node.branch-citizen.status-completed .career-node-body,
+.career-node.branch-diploma.status-locked .career-node-body,
+.career-node.branch-diploma.status-available .career-node-body,
+.career-node.branch-diploma.status-completed .career-node-body {
+  fill: rgba(16, 22, 27, 0.94);
+  stroke: rgba(174, 195, 215, 0.36);
+}
+
+.career-node.status-unknown .career-node-body {
+  fill: rgba(20, 28, 37, 0.78);
+  stroke: rgba(181, 198, 218, 0.24);
+}
+
+.career-node.status-available .career-node-body,
+.career-node.status-available .career-node-ring {
+  fill: rgba(57, 236, 143, 0.13);
+  stroke: #57eba5;
+  filter: drop-shadow(0 0 13px rgba(57, 236, 143, 0.38));
+}
+
+.career-node.status-available .career-node-aura { fill: rgba(57, 236, 143, 0.11); filter: blur(12px); }
+
+.career-node.status-available .career-node-label {
+  fill: #dcffec;
+}
+
+.career-node.status-unknown .career-node-question {
+  fill: rgba(255,255,255,0.68);
+}
+
+.career-node-label {
+  fill: rgba(240, 244, 251, 0.96);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  paint-order: stroke;
+  stroke: rgba(8, 10, 16, 0.38);
+  stroke-width: 0.7px;
+  pointer-events: none;
+}
+
+.career-node-icon {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .career-tree-viewport {
+    transition: none;
+  }
+
+  .career-tree-svg {
+    box-shadow: inset 0 0 24px rgba(255,255,255,0.03);
+  }
+}
+
+.career-path-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.career-path-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(18, 23, 31, 0.8);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.career-path-summary-item strong,
+.career-path-summary-item small {
+  display: block;
+}
+
+.career-path-summary-item strong {
+  color: rgba(238, 244, 255, 0.98);
+  font-size: 0.75rem;
+}
+
+.career-path-summary-item small {
+  color: rgba(181, 192, 212, 0.78);
+  font-size: 0.64rem;
+}
+
+.career-path-summary-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.38);
+  box-shadow: 0 0 12px rgba(255,255,255,0.22);
+}
+
+.career-path-summary-item.status-locked .career-path-summary-dot {
+  background: rgba(255,255,255,0.28);
+}
+
+.career-path-summary-item.status-available .career-path-summary-dot {
+  background: rgba(96, 234, 170, 0.95);
+}
+
+.career-path-summary-item.status-completed .career-path-summary-dot {
+  background: rgba(96, 234, 170, 0.95);
+  box-shadow: 0 0 14px rgba(96, 234, 170, 0.6);
+}
+
+.career-path-summary-item.status-unknown .career-path-summary-dot {
+  background: rgba(255,255,255,0.18);
+}
+
+@media (max-width: 560px) {
+  .career-tree-scroll {
+    padding: 14px 8px 18px;
+  }
+
+  .career-tree-svg {
+    width: 100%;
+    max-height: none;
+    border-radius: 18px;
+  }
+
+  .career-tree-close {
+    top: 9px;
+    right: 9px;
+  }
+
+  .career-path-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.career-tree-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 30%, rgba(255,255,255,0.02));
+}
+
+.career-tree-glow {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 280px;
+  height: 280px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(255, 179, 74, 0.12);
+  filter: blur(30px);
+}
+
+.career-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 130px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  color: #ecf4ff;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  background: rgba(18, 20, 24, 0.76);
+  box-shadow: 0 0 22px rgba(108, 128, 255, 0.2), inset 0 0 12px rgba(255,255,255,0.08);
+  z-index: 2;
+}
+
+.career-node.is-complete {
+  filter: brightness(1.08);
+  box-shadow: 0 0 24px rgba(127, 255, 160, 0.42), inset 0 0 14px rgba(127,255,160,0.18);
+}
+
+.career-node.is-progress {
+  opacity: 0.9;
+}
+
+.career-node span {
+  position: relative;
+  z-index: 1;
+}
+
+.career-node--politician {
+  left: 10%;
+  top: 18%;
+  border-color: rgba(73, 255, 156, 0.9);
+  box-shadow: 0 0 26px rgba(73, 255, 156, 0.6), inset 0 0 12px rgba(73, 255, 156, 0.2);
+  background: rgba(10, 26, 20, 0.78);
+}
+
+.career-node--public {
+  left: 35%;
+  top: 4%;
+  border-color: rgba(78, 205, 255, 0.9);
+  box-shadow: 0 0 26px rgba(78, 205, 255, 0.6), inset 0 0 12px rgba(78, 205, 255, 0.2);
+  background: rgba(11, 22, 34, 0.78);
+}
+
+.career-node--criminal {
+  right: 10%;
+  top: 18%;
+  border-color: rgba(255, 90, 120, 0.9);
+  box-shadow: 0 0 26px rgba(255, 90, 120, 0.6), inset 0 0 12px rgba(255, 90, 120, 0.18);
+  background: rgba(31, 12, 18, 0.8);
+}
+
+.career-node--diploma {
+  left: 50%;
+  bottom: 23%;
+  transform: translateX(-50%);
+  border-color: rgba(255, 211, 96, 0.9);
+  background: rgba(31, 23, 9, 0.82);
+  box-shadow: 0 0 24px rgba(255, 211, 96, 0.46), inset 0 0 12px rgba(255,211,96,0.2);
+}
+
+.career-node--citizen {
+  left: 50%;
+  bottom: 5%;
+  transform: translateX(-50%);
+  border-color: rgba(80, 255, 168, 0.9);
+  background: rgba(13, 30, 18, 0.82);
+  box-shadow: 0 0 26px rgba(80, 255, 168, 0.55), inset 0 0 12px rgba(80,255,168,0.18);
+}
+
+.career-branch-block {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.7);
+  background: rgba(18, 20, 24, 0.78);
+  box-shadow: inset 0 0 10px rgba(255,255,255,0.08);
+  z-index: 2;
+}
+
+.career-branch-block.is-available {
+  border-color: rgba(255,255,255,0.9);
+  box-shadow: 0 0 18px rgba(255,255,255,0.18), inset 0 0 12px rgba(255,255,255,0.08);
+}
+
+.career-branch-block.is-locked {
+  opacity: 0.8;
+}
+
+.career-branch-block--politician {
+  left: 18%;
+  top: 38%;
+  border-color: rgba(255,255,255,0.55);
+}
+
+.career-branch-block--public {
+  left: 48%;
+  top: 26%;
+  border-color: rgba(255,255,255,0.55);
+}
+
+.career-branch-block--criminal {
+  right: 18%;
+  top: 38%;
+  border-color: rgba(255,255,255,0.55);
+}
+
+.career-branch-lock {
+  font-size: 1.2rem;
+  color: rgba(255,255,255,0.7);
+  font-weight: 800;
+}
+
+.career-connector {
+  position: absolute;
+  z-index: 1;
+  height: 4px;
+  border-radius: 999px;
+  opacity: 0.3;
+  filter: drop-shadow(0 0 14px rgba(255,255,255,0.3));
+}
+
+.career-connector.is-active {
+  opacity: 1;
+  box-shadow: 0 0 16px rgba(255,255,255,0.22);
+}
+
+.career-connector--left {
+  left: 21%;
+  top: 47%;
+  width: 22%;
+  background: linear-gradient(90deg, rgba(72, 255, 164, 0.8), rgba(72, 255, 164, 1));
+  border-radius: 999px 0 0 999px;
+}
+
+.career-connector--center {
+  left: 38%;
+  top: 52%;
+  width: 24%;
+  background: linear-gradient(90deg, rgba(56, 208, 255, 0.8), rgba(56, 208, 255, 1));
+}
+
+.career-connector--right {
+  right: 21%;
+  top: 47%;
+  width: 22%;
+  background: linear-gradient(90deg, rgba(255, 91, 120, 0.8), rgba(255, 91, 120, 1));
+  border-radius: 0 999px 999px 0;
+}
+
+.career-requirement-card {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  border: 2px solid rgba(255,255,255,0.85);
+  background: rgba(16, 18, 22, 0.85);
+  color: #edf6ff;
+  z-index: 3;
+  box-shadow: 0 0 18px rgba(255,255,255,0.16);
+}
+
+.career-requirement-card.is-complete {
+  border-color: rgba(103, 255, 160, 0.8);
+  box-shadow: 0 0 20px rgba(103,255,160,0.35);
+}
+
+.career-requirement-card.is-locked {
+  opacity: 0.85;
+  border-color: rgba(255,255,255,0.35);
+}
+
+.career-requirement-card--politician {
+  left: 16%;
+  bottom: 24%;
+}
+
+.career-requirement-card--public {
+  left: 44%;
+  bottom: 24%;
+}
+
+.career-requirement-card--criminal {
+  right: 16%;
+  bottom: 24%;
+}
+
+.career-requirement-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 780px) {
+  .career-path-shell {
+    display: block;
+  }
+
+  .career-tree-stage {
+    min-height: 420px;
+  }
+
+  .career-node {
+    min-width: 104px;
+    padding: 8px 12px;
+    font-size: 0.72rem;
+  }
+
+  .career-node--politician { left: 8%; top: 18%; }
+  .career-node--public { left: 32%; top: 7%; }
+  .career-node--criminal { right: 8%; top: 18%; }
+  .career-node--diploma { left: 50%; bottom: 27%; }
+  .career-node--citizen { left: 50%; bottom: 8%; }
+
+  .career-branch-block--politician { left: 18%; top: 39%; }
+  .career-branch-block--public { left: 47%; top: 27%; }
+  .career-branch-block--criminal { right: 18%; top: 39%; }
+
+  .career-connector--left { width: 18%; }
+  .career-connector--center { width: 18%; }
+  .career-connector--right { width: 18%; }
+
+  .career-requirement-card {
+    padding: 8px 10px;
+    font-size: 0.68rem;
+  }
+
+  .career-requirement-card--politician { left: 12%; bottom: 20%; }
+  .career-requirement-card--public { left: 42%; bottom: 20%; }
+  .career-requirement-card--criminal { right: 12%; bottom: 20%; }
 }
 
 .info-card {
@@ -2896,7 +3822,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  width: min(72%, 290px);
+  width: min(84%, 340px);
   padding: 10px 16px;
   border-radius: 28px;
   background: rgba(18, 24, 27, 0.72);
