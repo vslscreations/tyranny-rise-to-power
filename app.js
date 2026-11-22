@@ -4938,22 +4938,36 @@ async function refreshCitizenBalanceFromSupabase(citizenId) {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('citizen_private')
-      .select('citizen_id, balance')
-      .eq('citizen_id', citizenId)
-      .maybeSingle();
+    const isCurrentCitizen = Boolean(profileState.citizen?.id && String(profileState.citizen.id) === String(citizenId));
+    let data;
 
-    if (error) {
-      throw error;
+    if (isCurrentCitizen) {
+      // The signed-in profile endpoint is the same source used after an app restart.
+      const response = await supabase.functions.invoke('get-citizen-profile');
+      if (response.error) {
+        throw response.error;
+      }
+      data = response.data;
+    } else {
+      const response = await supabase
+        .from('citizen_private')
+        .select('citizen_id, balance')
+        .eq('citizen_id', citizenId)
+        .maybeSingle();
+      if (response.error) {
+        throw response.error;
+      }
+      data = response.data;
     }
 
-    if (!data) {
+    if (data?.balance === null || data?.balance === undefined) {
       return null;
     }
 
     const nextBalance = Number(data.balance);
-    const isCurrentCitizen = Boolean(profileState.citizen?.id && profileState.citizen.id === citizenId);
+    if (!Number.isFinite(nextBalance)) {
+      return null;
+    }
 
     if (isCurrentCitizen) {
       profileState.private = {
@@ -4961,7 +4975,6 @@ async function refreshCitizenBalanceFromSupabase(citizenId) {
         balance: nextBalance,
       };
       applyCitizenProfile(profileState.citizen);
-      renderPlayerDetails();
     }
 
     return nextBalance;
@@ -8486,16 +8499,26 @@ function renderAppContent(appId, mode = 'normal') {
         moneytreeState.clockInNotice = success ? resultMessage || 'Clocked in successfully. Reward credited.' : (resultMessage || 'Clock In was unavailable.');
 
         if (success && profileState.citizen?.id) {
-          await refreshCitizenBalanceFromSupabase(profileState.citizen.id);
+          const refreshedBalance = await refreshCitizenBalanceFromSupabase(profileState.citizen.id);
+          if (refreshedBalance !== null) {
+            moneytreeState.dashboardData = {
+              ...(moneytreeState.dashboardData || {}),
+              available_balance: refreshedBalance,
+            };
+            const visibleBalance = body.querySelector('.moneytree-hero-balance');
+            if (visibleBalance) {
+              visibleBalance.textContent = formatMoney(refreshedBalance);
+            }
+          }
         }
 
         await loadClockInStatus();
-        await loadMoneytreeView();
       } catch (error) {
         console.error('MoneyTree Clock In claim failed:', error);
         moneytreeState.clockInNotice = error?.message || 'Unable to process your Clock In request right now.';
       } finally {
         moneytreeState.clockInSubmitting = false;
+        await loadMoneytreeView(true);
       }
     };
 
@@ -9153,9 +9176,13 @@ function renderAppContent(appId, mode = 'normal') {
       }
     };
 
-    const loadMoneytreeView = async () => {
+    const loadMoneytreeView = async (forceRefresh = false) => {
       if (moneytreeState.dashboardLoading) {
-        return moneytreeState.dashboardLoading;
+        const activeLoad = moneytreeState.dashboardLoading;
+        if (!forceRefresh) {
+          return activeLoad;
+        }
+        await activeLoad;
       }
 
       const sessionRequest = getAuthClient();
