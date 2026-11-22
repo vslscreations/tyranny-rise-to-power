@@ -11612,6 +11612,10 @@ function getAuthClient() {
   return window.TYRANNY_SUPABASE;
 }
 
+function getAuthRedirectUrl() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
 async function handleRegister(event) {
   event.preventDefault();
   const supabase = getAuthClient();
@@ -11638,6 +11642,7 @@ async function handleRegister(event) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: { emailRedirectTo: getAuthRedirectUrl() },
     });
 
     if (error) {
@@ -11740,7 +11745,7 @@ async function handleSendRecovery(event) {
     return;
   }
 
-  const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+  const redirectUrl = getAuthRedirectUrl();
 
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -11903,6 +11908,7 @@ async function handleResendVerification() {
     const { error } = await supabase.auth.resend({
       type: 'signup',
       email,
+      options: { emailRedirectTo: getAuthRedirectUrl() },
     });
 
     if (error) {
