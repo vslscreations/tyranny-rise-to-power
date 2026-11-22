@@ -70,6 +70,90 @@ const installZoomLock = () => {
 
 installZoomLock();
 
+function bindGlobalCitizenProfileActions() {
+  const root = document.body;
+  if (!root || root.dataset.globalProfileNavigationBound === 'true') {
+    return;
+  }
+
+  root.dataset.globalProfileNavigationBound = 'true';
+  root.addEventListener('click', async (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+
+    const profileOpenButton = target.closest('[data-social-action="open-citizen-profile"]');
+    if (profileOpenButton) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const targetCitizenId = String(profileOpenButton.dataset.citizenId || '').trim();
+      if (!targetCitizenId) {
+        return;
+      }
+
+      await loadSocialProfileView(targetCitizenId);
+      return;
+    }
+
+    const closeProfileButton = target.closest('[data-social-action="close-profile-view"]');
+    if (closeProfileButton) {
+      closeSocialProfileView();
+    }
+
+    const messageProfileButton = target.closest('[data-social-action="message-profile"]');
+    if (messageProfileButton) {
+      event.preventDefault();
+      const targetCitizenId = String(messageProfileButton.dataset.targetCitizenId || '').trim();
+      if (!targetCitizenId || socialState.profileMessageBusyByCitizen[targetCitizenId]) {
+        return;
+      }
+
+      const profileData = socialState.profileView?.data || null;
+      const profileHandle = formatSocialHandle(profileData?.handle || '@citizen', '@citizen');
+      const profileAvatarUrl = profileData?.avatar_url || './assets/avatars/aurelia-voss.svg';
+      await startProfileMessageAction(targetCitizenId, profileHandle, profileAvatarUrl);
+    }
+
+    const associateToggle = target.closest('[data-associate-action="toggle-profile-association"]');
+    if (associateToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleProfileAssociationPicker(associateToggle.dataset.targetCitizenId);
+      return;
+    }
+
+    const associateChoice = target.closest('[data-associate-action="set-association"]');
+    if (associateChoice) {
+      event.preventDefault();
+      event.stopPropagation();
+      const targetCitizenId = String(associateChoice.dataset.targetCitizenId || '').trim();
+      const relationshipType = String(associateChoice.dataset.relationshipType || '').trim();
+      if (!targetCitizenId || !relationshipType) {
+        return;
+      }
+
+      await setCitizenRelationship(targetCitizenId, relationshipType);
+      return;
+    }
+
+    const removeAssociateButton = target.closest('[data-associate-action="remove-association"]');
+    if (removeAssociateButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const targetCitizenId = String(removeAssociateButton.dataset.targetCitizenId || '').trim();
+      if (!targetCitizenId) {
+        return;
+      }
+
+      await removeCitizenRelationship(targetCitizenId);
+    }
+  });
+}
+
+bindGlobalCitizenProfileActions();
+
 const builtInAvatarAssets = [
   { url: './assets/avatars/aurelia-voss.svg', label: 'Aurelia Voss' },
   { url: './assets/avatars/jasper-reed.svg', label: 'Jasper Reed' },
@@ -78,6 +162,8 @@ const builtInAvatarAssets = [
   { url: './assets/avatars/leah-cortez.svg', label: 'Leah Cortez' },
   { url: './assets/avatars/omar-tate.svg', label: 'Omar Tate' },
 ];
+
+const moneytreeContributorNameCache = new Map();
 
 const profileState = {
   citizen: null,
@@ -89,7 +175,7 @@ const profileState = {
 
 const appCatalog = {
   social: {
-    name: 'Social Media',
+    name: 'FakeBook',
     icon: './images/icons/socialmedia.PNG',
     color: '#8bc4ff',
     unread: 1,
@@ -195,7 +281,7 @@ const notifications = [
 ];
 
 const socialState = {
-  activeTab: 'following',
+  activeTab: 'associates',
   followSet: new Set(),
   posts: [],
   loading: false,
@@ -249,6 +335,7 @@ const socialState = {
     error: null,
     requestToken: 0,
   },
+  relationshipNotice: null,
   currentCitizenHandle: null,
   handleOnboarding: {
     open: false,
@@ -274,13 +361,24 @@ const socialState = {
 
 const associatesState = {
   loading: false,
+  requestToken: 0,
   error: null,
   friends: [],
   enemies: [],
+  filter: 'all',
   currentPickerTargetId: null,
   currentPickerOpen: false,
   pendingTargetId: null,
 };
+
+function resetProfileRelationshipPickerState() {
+  associatesState.currentPickerTargetId = null;
+  associatesState.currentPickerOpen = false;
+  if (socialState.profileView) {
+    socialState.profileView.relationshipPickerTargetId = null;
+    socialState.profileView.relationshipPickerOpen = false;
+  }
+}
 
 const messagesState = {
   items: [],
@@ -304,6 +402,13 @@ const messagesState = {
   readMarkThreadId: null,
   readMarkError: null,
 };
+
+function getUnifiedAssociates(filter = associatesState.filter) {
+  const normalizedFilter = filter === 'friend' || filter === 'enemy' ? filter : 'all';
+  return [...associatesState.friends, ...associatesState.enemies]
+    .filter((associate) => normalizedFilter === 'all' || associate.relationshipType === normalizedFilter)
+    .sort((left, right) => String(left.publicName).localeCompare(String(right.publicName)));
+}
 
 const appState = {};
 const storeState = {
@@ -460,7 +565,21 @@ const authState = {
   currentView: 'login',
   pendingEmail: '',
   hasCitizen: false,
+  initializing: true,
+  ready: false,
 };
+
+function getSafeAuthDiagnostics() {
+  const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || {};
+  return {
+    projectUrl: diagnostics.projectUrl ?? window.TYRANNY_SUPABASE_CONFIG?.url ?? null,
+    sessionExists: Boolean(diagnostics.sessionExists),
+    userId: diagnostics.userId ?? null,
+    persistedSessionKeys: Number(diagnostics.persistedSessionKeys ?? 0),
+    initializedAt: diagnostics.initializedAt ?? null,
+    lastUpdatedAt: diagnostics.lastUpdatedAt ?? null,
+  };
+}
 
 const citizenNameSeeds = {
   first: ['Aurelia', 'Jasper', 'Mira', 'Dorian', 'Leah', 'Omar', 'Cassian', 'Iris', 'Rowan', 'Selene'],
@@ -1261,10 +1380,10 @@ function renderAssociatesApp() {
   const friends = Array.isArray(associatesState.friends) ? associatesState.friends : [];
   const enemies = Array.isArray(associatesState.enemies) ? associatesState.enemies : [];
 
-  const friendMarkup = associatesState.loading
-    ? '<div class="mylife-alert"><span>Loading</span><p>Checking your associations…</p></div>'
-    : friends.length
-      ? friends.map((associate) => `
+  const visibleAssociates = getUnifiedAssociates();
+  const filterLabel = associatesState.filter === 'friend' ? 'friends' : associatesState.filter === 'enemy' ? 'enemies' : 'associates';
+  const associateMarkup = visibleAssociates.length
+      ? visibleAssociates.map((associate) => `
           <button type="button" class="associate-item" data-social-action="open-citizen-profile" data-citizen-id="${escapeHtml(String(associate.citizenId || ''))}">
             <div class="associate-avatar" style="background-image: url('${escapeHtml(associate.avatarUrl || './assets/avatars/aurelia-voss.svg')}')"></div>
             <div class="associate-copy">
@@ -1272,66 +1391,44 @@ function renderAssociatesApp() {
               <span>${escapeHtml(associate.handle || '@citizen')}</span>
               <small>${escapeHtml(associate.profession || 'Civilian')}</small>
             </div>
-            <span class="associate-pill friend">Friend</span>
+            <span class="associate-pill ${associate.relationshipType === 'enemy' ? 'enemy' : 'friend'}">${associate.relationshipType === 'enemy' ? 'Enemy' : 'Friend'}</span>
+            <span class="associate-chevron" aria-hidden="true">›</span>
           </button>
         `).join('')
-      : '<div class="messages-empty-state"><strong>No friends yet.</strong><p>You have not marked any citizens as friends.</p></div>';
-
-  const enemyMarkup = associatesState.loading
-    ? '<div class="mylife-alert"><span>Loading</span><p>Checking your associations…</p></div>'
-    : enemies.length
-      ? enemies.map((associate) => `
-          <button type="button" class="associate-item" data-social-action="open-citizen-profile" data-citizen-id="${escapeHtml(String(associate.citizenId || ''))}">
-            <div class="associate-avatar" style="background-image: url('${escapeHtml(associate.avatarUrl || './assets/avatars/aurelia-voss.svg')}')"></div>
-            <div class="associate-copy">
-              <strong>${escapeHtml(associate.publicName || 'Citizen')}</strong>
-              <span>${escapeHtml(associate.handle || '@citizen')}</span>
-              <small>${escapeHtml(associate.profession || 'Civilian')}</small>
-            </div>
-            <span class="associate-pill enemy">Enemy</span>
-          </button>
-        `).join('')
-      : '<div class="messages-empty-state"><strong>No enemies yet.</strong><p>You have not marked any citizens as enemies.</p></div>';
+      : associatesState.loading
+        ? '<div class="messages-empty-state"><strong>Loading contacts…</strong></div>'
+        : `<div class="messages-empty-state"><strong>No ${escapeHtml(filterLabel)} yet.</strong><p>Mark citizens as friends or enemies from their profile.</p></div>`;
 
   body.innerHTML = `
     <div class="associates-shell">
-      <div class="social-header">
-        <div>
-          <div class="section-kicker">Relationships</div>
+      <header class="associates-header">
+        <div class="associates-heading">
           <h3>Contacts</h3>
+          <button type="button" class="associates-refresh" data-action="refresh-associates" aria-label="Refresh contacts" title="Refresh contacts">↻</button>
         </div>
-        <button type="button" class="secondary-button" data-action="refresh-associates">Refresh</button>
-      </div>
+        <p>Your associates</p>
+      </header>
       ${associatesState.error ? `<div class="mylife-alert"><span>Contacts unavailable</span><p>${escapeHtml(associatesState.error)}</p></div>` : ''}
-      <div class="associates-grid">
-        <div class="associates-panel">
-          <div class="associates-panel-header">
-            <div>
-              <div class="section-kicker">Allies</div>
-              <h4>Friends</h4>
-            </div>
-            <span class="associate-count">${String(friends.length)}</span>
-          </div>
-          <div class="associates-list">${friendMarkup}</div>
-        </div>
-        <div class="associates-panel danger-panel">
-          <div class="associates-panel-header">
-            <div>
-              <div class="section-kicker">Threats</div>
-              <h4>Enemies</h4>
-            </div>
-            <span class="associate-count danger">${String(enemies.length)}</span>
-          </div>
-          <div class="associates-list">${enemyMarkup}</div>
-        </div>
+      <div class="associate-filter" role="group" aria-label="Filter associates">
+        <button type="button" class="associate-filter-button ${associatesState.filter === 'all' ? 'active' : ''}" data-associate-filter="all" aria-pressed="${associatesState.filter === 'all'}">All <span>${String(friends.length + enemies.length)}</span></button>
+        <button type="button" class="associate-filter-button ${associatesState.filter === 'friend' ? 'active' : ''}" data-associate-filter="friend" aria-pressed="${associatesState.filter === 'friend'}">Friends <span>${String(friends.length)}</span></button>
+        <button type="button" class="associate-filter-button ${associatesState.filter === 'enemy' ? 'active' : ''}" data-associate-filter="enemy" aria-pressed="${associatesState.filter === 'enemy'}">Enemies <span>${String(enemies.length)}</span></button>
       </div>
+      <div class="associates-list" aria-live="polite">${associateMarkup}</div>
     </div>
   `;
 
   const refreshButton = body.querySelector('[data-action="refresh-associates"]');
   refreshButton?.addEventListener('click', async () => {
     await loadAssociatesApp();
-    renderAssociatesApp();
+  });
+
+  body.querySelectorAll('[data-associate-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextFilter = button.dataset.associateFilter;
+      associatesState.filter = nextFilter === 'friend' || nextFilter === 'enemy' ? nextFilter : 'all';
+      renderAssociatesApp();
+    });
   });
 
   body.querySelectorAll('[data-social-action="open-citizen-profile"]').forEach((button) => {
@@ -1390,16 +1487,16 @@ function renderMessagesApp() {
         ${messagesState.readMarkError ? `<div class="mylife-alert"><span>Read status update failed</span><p>${escapeHtml(messagesState.readMarkError)}</p></div>` : ''}
         <textarea
           class="message-composer-input"
-          rows="3"
+          rows="1"
           maxlength="2000"
           placeholder="Write a message…"
           data-message-composer
           aria-label="Write a message"
         >${escapeHtml(messagesState.composerDraft)}</textarea>
         <div class="messages-composer-row">
-          <span class="message-composer-count">${Array.from(messagesState.composerDraft).length}/2000</span>
-          <button type="button" class="primary-button" data-action="send-message" ${messagesState.sending ? 'disabled' : ''}>
-            ${messagesState.sending ? 'Sending…' : 'Send'}
+          <span class="message-composer-count" aria-label="Message character count">${Array.from(messagesState.composerDraft).length}/2000</span>
+          <button type="button" class="primary-button message-send-button" data-action="send-message" aria-label="Send message" ${messagesState.sending ? 'disabled' : ''}>
+            ${messagesState.sending ? '…' : '↑'}
           </button>
         </div>
       </div>
@@ -1408,15 +1505,14 @@ function renderMessagesApp() {
     const conversationMarkup = `
       <div class="messages-card">
         <div class="messages-header-row">
-          <button type="button" class="secondary-button" data-action="back-to-inbox">Back to Inbox</button>
+          <button type="button" class="secondary-button message-back-button" data-action="back-to-inbox">‹ <span>Messages</span></button>
           <div class="messages-conversation-header">
             <div class="message-thread-avatar" style="background-image: url('${escapeHtml(partnerAvatar)}')"></div>
             <div>
-              <div class="section-kicker">Conversation</div>
               <h3>${escapeHtml(messagesState.activePartnerName)}</h3>
             </div>
           </div>
-          <button type="button" class="secondary-button" data-action="open-partner-profile" data-partner-citizen-id="${escapeHtml(String(messagesState.activePartnerCitizenId ?? ''))}">To profile</button>
+          <button type="button" class="secondary-button message-profile-button" data-action="open-partner-profile" data-partner-citizen-id="${escapeHtml(String(messagesState.activePartnerCitizenId ?? ''))}">Info</button>
         </div>
         <div class="messages-thread-list">
           ${historyMarkup}
@@ -1482,12 +1578,10 @@ function renderMessagesApp() {
   const inboxMarkup = `
     <div class="messages-card">
       <div class="messages-header-row">
-        <div>
-          <div class="section-kicker">Private messages</div>
-          <h3>Inbox</h3>
-        </div>
-        <button type="button" class="secondary-button" data-action="refresh-messages">Refresh</button>
+        <h3>Messages</h3>
+        <button type="button" class="secondary-button message-refresh-button" data-action="refresh-messages">↻ <span>Refresh</span></button>
       </div>
+      <div class="messages-list-caption">Private conversations with your associates</div>
       ${messagesState.loading ? '<div class="mylife-alert"><span>Loading</span><p>Checking your inbox…</p></div>' : ''}
       ${messagesState.error ? `<div class="mylife-alert"><span>Messages unavailable</span><p>${escapeHtml(messagesState.error)}</p></div>` : ''}
       <div class="messages-list">
@@ -1714,6 +1808,8 @@ function openSocialProfileView(targetCitizenId) {
     return;
   }
 
+  resetProfileRelationshipPickerState();
+
   const nextRequestToken = Number(socialState.profileView?.requestToken || 0) + 1;
   socialState.profileView = {
     active: true,
@@ -1722,12 +1818,16 @@ function openSocialProfileView(targetCitizenId) {
     loading: true,
     error: null,
     requestToken: nextRequestToken,
+    relationshipPickerTargetId: null,
+    relationshipPickerOpen: false,
   };
 
   renderSocialApp();
 }
 
 function closeSocialProfileView() {
+  resetProfileRelationshipPickerState();
+
   const nextRequestToken = Number(socialState.profileView?.requestToken || 0) + 1;
   socialState.profileView = {
     active: false,
@@ -1736,16 +1836,26 @@ function closeSocialProfileView() {
     loading: false,
     error: null,
     requestToken: nextRequestToken,
+    relationshipPickerTargetId: null,
+    relationshipPickerOpen: false,
   };
 
   renderSocialApp();
 }
 
 async function loadSocialProfileView(targetCitizenId) {
+  if (authState.initializing || !authState.ready) {
+    return;
+  }
+
   const normalizedCitizenId = String(targetCitizenId ?? '').trim();
   if (!normalizedCitizenId) {
     return;
   }
+
+  socialState.relationshipNotice = null;
+
+  resetProfileRelationshipPickerState();
 
   const requestToken = Number(socialState.profileView?.requestToken || 0) + 1;
   socialState.profileView = {
@@ -1755,6 +1865,8 @@ async function loadSocialProfileView(targetCitizenId) {
     loading: true,
     error: null,
     requestToken,
+    relationshipPickerTargetId: null,
+    relationshipPickerOpen: false,
   };
 
   renderSocialApp();
@@ -1872,12 +1984,14 @@ function normalizeAssociateListRecord(record) {
 }
 
 async function loadAssociatesApp() {
+  const requestToken = ++associatesState.requestToken;
   const supabase = getAuthClient();
   if (!supabase) {
     associatesState.loading = false;
     associatesState.error = 'Associates is unavailable because Supabase is not available.';
     associatesState.friends = [];
     associatesState.enemies = [];
+    renderAssociatesApp();
     return;
   }
 
@@ -1889,6 +2003,10 @@ async function loadAssociatesApp() {
       supabase.rpc('get_current_citizen_association_list', { p_relationship_type: 'friend' }),
       supabase.rpc('get_current_citizen_association_list', { p_relationship_type: 'enemy' }),
     ]);
+
+    if (requestToken !== associatesState.requestToken) {
+      return;
+    }
 
     if (friendsResult.error) {
       throw friendsResult.error;
@@ -1906,12 +2024,16 @@ async function loadAssociatesApp() {
       ? enemiesResult.data.map((row) => normalizeAssociateListRecord(row)).filter(Boolean)
       : [];
   } catch (error) {
+    if (requestToken !== associatesState.requestToken) {
+      return;
+    }
     console.error('associates load failed', error);
     associatesState.error = error?.message || 'Unable to load associates right now.';
-    associatesState.friends = [];
-    associatesState.enemies = [];
   } finally {
-    associatesState.loading = false;
+    if (requestToken === associatesState.requestToken) {
+      associatesState.loading = false;
+      renderAssociatesApp();
+    }
   }
 }
 
@@ -1941,15 +2063,24 @@ async function loadProfileRelationshipStatus(targetCitizenId) {
 }
 
 async function setCitizenRelationship(targetCitizenId, relationshipType) {
+  if (authState.initializing || !authState.ready) {
+    setRelationshipNotice(authState.initializing
+      ? 'Your signed-in session is still being prepared. Please try Associate again in a moment.'
+      : 'Please sign in before changing an association.', 'error');
+    return false;
+  }
+
   const supabase = getAuthClient();
   const normalizedTarget = String(targetCitizenId || '').trim();
   const normalizedType = String(relationshipType || '').trim().toLowerCase();
 
   if (!supabase || !normalizedTarget || (normalizedType !== 'friend' && normalizedType !== 'enemy')) {
+    setRelationshipNotice('That association request is not valid. Please reopen the citizen profile and try again.', 'error');
     return false;
   }
 
   if (profileState.citizen?.id && normalizedTarget === String(profileState.citizen.id)) {
+    setRelationshipNotice('You cannot change your association with yourself.', 'error');
     return false;
   }
 
@@ -1968,24 +2099,41 @@ async function setCitizenRelationship(targetCitizenId, relationshipType) {
         ...(socialState.profileView.data || {}),
         relationship_type: normalizedType,
       };
+      socialState.profileView.relationshipPickerTargetId = null;
+      socialState.profileView.relationshipPickerOpen = false;
     }
 
-    if (associatesState.currentPickerTargetId === normalizedTarget || activeAppId === 'associates') {
-      await loadAssociatesApp();
-      renderAssociatesApp();
+    associatesState.currentPickerTargetId = null;
+    associatesState.currentPickerOpen = false;
+    setRelationshipNotice(`Association updated: ${normalizedType === 'friend' ? 'Friend' : 'Enemy'}.`, 'success');
+
+    if (socialState.profileView?.active && String(socialState.profileView.targetCitizenId || '') === normalizedTarget) {
+      renderSocialApp();
     }
+
+    await loadAssociatesApp();
+    renderAssociatesApp();
 
     return true;
   } catch (error) {
     console.error('set citizen relationship failed', error);
+    setRelationshipNotice(`Could not update this association. ${error?.message || 'Please try again.'}`, 'error');
     return false;
   }
 }
 
 async function removeCitizenRelationship(targetCitizenId) {
+  if (authState.initializing || !authState.ready) {
+    setRelationshipNotice(authState.initializing
+      ? 'Your signed-in session is still being prepared. Please try again in a moment.'
+      : 'Please sign in before changing an association.', 'error');
+    return false;
+  }
+
   const supabase = getAuthClient();
   const normalizedTarget = String(targetCitizenId || '').trim();
   if (!supabase || !normalizedTarget) {
+    setRelationshipNotice('That association request is not valid. Please reopen the citizen profile and try again.', 'error');
     return false;
   }
 
@@ -2003,18 +2151,56 @@ async function removeCitizenRelationship(targetCitizenId) {
         ...(socialState.profileView.data || {}),
         relationship_type: null,
       };
+      socialState.profileView.relationshipPickerTargetId = null;
+      socialState.profileView.relationshipPickerOpen = false;
     }
 
-    if (associatesState.currentPickerTargetId === normalizedTarget || activeAppId === 'associates') {
-      await loadAssociatesApp();
-      renderAssociatesApp();
+    associatesState.currentPickerTargetId = null;
+    associatesState.currentPickerOpen = false;
+    setRelationshipNotice('Association removed.', 'success');
+
+    if (socialState.profileView?.active && String(socialState.profileView.targetCitizenId || '') === normalizedTarget) {
+      renderSocialApp();
     }
+
+    await loadAssociatesApp();
+    renderAssociatesApp();
 
     return true;
   } catch (error) {
     console.error('remove citizen relationship failed', error);
+    setRelationshipNotice(`Could not remove this association. ${error?.message || 'Please try again.'}`, 'error');
     return false;
   }
+}
+
+function setRelationshipNotice(message, type = 'error') {
+  socialState.relationshipNotice = { message: String(message || ''), type };
+  if (socialState.profileView?.active) {
+    renderSocialApp();
+  }
+}
+
+function toggleProfileAssociationPicker(targetCitizenId) {
+  const normalizedTarget = String(targetCitizenId || '').trim();
+  if (!normalizedTarget) {
+    setRelationshipNotice('This citizen profile is missing the information needed to update an association.', 'error');
+    return false;
+  }
+
+  const shouldOpen = !(associatesState.currentPickerTargetId === normalizedTarget && associatesState.currentPickerOpen);
+  const targetIdForPicker = shouldOpen ? normalizedTarget : null;
+
+  associatesState.currentPickerTargetId = targetIdForPicker;
+  associatesState.currentPickerOpen = shouldOpen;
+
+  if (socialState.profileView && String(socialState.profileView.targetCitizenId || '') === normalizedTarget) {
+    socialState.profileView.relationshipPickerTargetId = targetIdForPicker;
+    socialState.profileView.relationshipPickerOpen = shouldOpen;
+  }
+
+  renderSocialApp();
+  return shouldOpen;
 }
 
 async function loadCommentsForPost(postId, appendOnly = false) {
@@ -2113,12 +2299,17 @@ async function loadSocialFeed(tabName = socialState.activeTab) {
   const supabase = getAuthClient();
   const rpcMap = {
     latest: 'get_latest_feed',
-    following: 'get_following_feed',
+    associates: 'get_latest_feed',
+    following: 'get_latest_feed',
     trending: 'get_trending_feed',
   };
 
+  if (tabName === 'associates') {
+    await loadAssociatesApp();
+  }
+
   const requestId = ++socialState.feedRequestToken;
-  const rpcName = rpcMap[tabName] || rpcMap.following;
+  const rpcName = rpcMap[tabName] || rpcMap.associates;
 
   if (!supabase) {
     socialState.loading = false;
@@ -2143,7 +2334,20 @@ async function loadSocialFeed(tabName = socialState.activeTab) {
     }
 
     const feedRows = Array.isArray(data) ? data : [];
-    socialState.posts = feedRows.map((record) => normalizeSocialPostRecord(record));
+    if (tabName === 'associates') {
+      const associateSet = new Set([
+        ...associatesState.friends.map((person) => String(person.citizenId || '').trim()),
+        ...associatesState.enemies.map((person) => String(person.citizenId || '').trim()),
+      ].filter(Boolean));
+      socialState.posts = feedRows
+        .map((record) => normalizeSocialPostRecord(record))
+        .filter((post) => {
+          const authorId = String(post.authorCitizenId || '').trim();
+          return !authorId || associateSet.has(authorId);
+        });
+    } else {
+      socialState.posts = feedRows.map((record) => normalizeSocialPostRecord(record));
+    }
     syncFollowSetFromPosts();
     socialState.error = null;
   } catch (error) {
@@ -2822,18 +3026,16 @@ function renderSocialApp() {
     const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
     const profileTargetCitizenId = profileView.targetCitizenId ? String(profileView.targetCitizenId) : null;
     const isOwnProfile = Boolean(profileTargetCitizenId && currentCitizenId && profileTargetCitizenId === currentCitizenId);
-    const isFollowingProfile = Boolean(profileView.data?.current_user_following || (profileTargetCitizenId && socialState.followSet.has(profileTargetCitizenId)));
-    const profileFollowPending = Boolean(profileTargetCitizenId && socialState.pendingFollowAuthorIds.has(profileTargetCitizenId));
-    const profileFollowLabel = profileFollowPending
-      ? (isFollowingProfile ? 'Unfollowing...' : 'Following...')
-      : (isFollowingProfile ? 'Unfollow' : 'Follow');
-    const profileFollowTitle = isFollowingProfile
-      ? 'Click to unfollow this citizen'
-      : 'Follow this citizen';
     const profileMessageBusy = Boolean(profileTargetCitizenId && socialState.profileMessageBusyByCitizen[profileTargetCitizenId]);
     const profileRelationship = String(profileView.data?.relationship_type || '').trim().toLowerCase();
     const profileRelationshipLabel = profileRelationship === 'friend' ? 'Friend' : profileRelationship === 'enemy' ? 'Enemy' : 'Associate';
-    const associateMenuOpen = Boolean(profileTargetCitizenId && associatesState.currentPickerTargetId === profileTargetCitizenId && associatesState.currentPickerOpen);
+    const pickerTargetId = String(socialState.profileView?.relationshipPickerTargetId || associatesState.currentPickerTargetId || '').trim();
+    const associateMenuOpen = Boolean(
+      profileTargetCitizenId &&
+      pickerTargetId === profileTargetCitizenId &&
+      (Boolean(socialState.profileView?.relationshipPickerOpen) || associatesState.currentPickerOpen)
+    );
+    const relationshipNotice = socialState.relationshipNotice;
     const profileHeaderActions = !isOwnProfile && profileTargetCitizenId && !profileView.loading && !profileView.error ? `
       <div class="social-associate-wrap">
         <button
@@ -2841,6 +3043,7 @@ function renderSocialApp() {
           class="secondary-button social-associate-toggle"
           data-associate-action="toggle-profile-association"
           data-target-citizen-id="${escapeHtml(profileTargetCitizenId)}"
+          aria-expanded="${associateMenuOpen ? 'true' : 'false'}"
         >${profileRelationshipLabel}</button>
         ${associateMenuOpen ? `
           <div class="social-associate-menu">
@@ -2858,15 +3061,24 @@ function renderSocialApp() {
         title="Send a message to this citizen"
         ${profileMessageBusy ? 'disabled aria-disabled="true"' : ''}
       >${profileMessageBusy ? 'Opening…' : 'Message'}</button>
-      <button
-        type="button"
-        class="secondary-button social-follow-toggle ${isFollowingProfile ? 'following' : ''}"
-        data-social-action="toggle-profile-follow"
-        data-follow-author-id="${escapeHtml(profileTargetCitizenId)}"
-        title="${escapeHtml(profileFollowTitle)}"
-        ${profileFollowPending ? 'disabled aria-disabled="true"' : ''}
-      >${profileFollowLabel}</button>
     ` : '';
+
+    const profileStatusText = profileView.data?.current_user_following ? 'Following' : 'Citizen';
+    const profileFriendBadge = '';
+    const profileEmploymentStatus = String(
+      profileView.data?.profession || profileState.private?.profession || profileView.data?.employment_status || 'Unavailable'
+    ).trim() || 'Unavailable';
+    const profileSocialClass = String(
+      profileView.data?.social_class || profileState.private?.social_class || 'Unavailable'
+    ).trim() || 'Unavailable';
+    const profileEducation = String(
+      profileView.data?.education || profileState.private?.education || 'Unavailable'
+    ).trim() || 'Unavailable';
+    const profileDetailRows = [
+      { key: 'employment_status', label: 'Employment status', value: getDisplayProfession(profileEmploymentStatus, 'Unavailable'), icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8.5V6.7A2.7 2.7 0 0 1 9.7 4h4.6A2.7 2.7 0 0 1 17 6.7v1.8M4.5 18.5h15a1 1 0 0 0 1-1V9.8a1 1 0 0 0-1-1h-15a1 1 0 0 0-1 1v7.7a1 1 0 0 0 1 1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+      { key: 'social_class', label: 'Social class', value: profileSocialClass, icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18.5V8.8m7 9.7V5.5m7 13V11.2M3.5 18.5h17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+      { key: 'education', label: 'Education', value: profileEducation, icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.2 12 5l8 4.2-8 4.2-8-4.2Zm-1 2.8 9 4.5 9-4.5M7 12v4.8c.9 1.7 3 2.9 5 2.9s4.1-1.2 5-2.9V12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    ];
 
     const profileBody = profileView.loading
       ? `
@@ -2883,25 +3095,26 @@ function renderSocialApp() {
           </div>
         `
         : `
-          <div class="mylife-panel">
-            <div class="mylife-overview-grid">
-              <div class="mylife-stat-row"><span>Followers</span><strong>${escapeHtml(String(profileView.data?.follower_count ?? 0))}</strong></div>
-              <div class="mylife-stat-row"><span>Political party</span><strong>${escapeHtml(profileView.data?.political_party || 'Independent')}</strong></div>
-              <div class="mylife-stat-row"><span>Social class</span><strong>${escapeHtml(profileView.data?.social_class || 'Unknown')}</strong></div>
-              <div class="mylife-stat-row"><span>Career</span><strong>${escapeHtml(getDisplayProfession(profileView.data?.profession, 'Unknown'))}</strong></div>
-              <div class="mylife-stat-row"><span>Registration date</span><strong>${escapeHtml(registrationDate)}</strong></div>
+          <section class="profile-section">
+            <div class="profile-section-header">
+              <h3>Personal details</h3>
             </div>
-          </div>
+            <div class="profile-detail-list">
+              ${profileDetailRows.map((detail) => `
+                <div class="profile-detail-item">
+                  <span class="profile-detail-icon">${detail.icon}</span>
+                  <strong>${escapeHtml(detail.label)}: ${escapeHtml(detail.value)}</strong>
+                </div>
+              `).join('')}
+            </div>
+          </section>
 
           ${profilePosts.length ? `
-            <div class="mylife-panel">
-              <div class="mylife-panel-header compact">
-                <div>
-                  <div class="section-kicker">Recent posts</div>
-                  <h3>Latest activity</h3>
-                </div>
+            <section class="profile-section">
+              <div class="profile-section-header">
+                <h3>Recent posts</h3>
               </div>
-              <div class="social-feed">
+              <div class="social-feed profile-feed">
                 ${profilePosts.map((post) => {
                   const author = post?.author || {};
                   const authorHandle = formatSocialHandle(post?.author_handle || author.handle || '@citizen', '@citizen');
@@ -2914,7 +3127,7 @@ function renderSocialApp() {
                   const commentCount = Number(post?.comment_count ?? 0) || 0;
 
                   return `
-                    <article class="social-post" data-post-id="${escapeHtml(postId)}">
+                    <article class="social-post profile-post" data-post-id="${escapeHtml(postId)}">
                       <div class="social-post-header">
                         <button
                           type="button"
@@ -2940,28 +3153,62 @@ function renderSocialApp() {
                   `;
                 }).join('')}
               </div>
-            </div>
+            </section>
           ` : `
-            <div class="mylife-alert">
-              <span>No posts yet</span>
-              <p>This citizen has not posted anything recent.</p>
-            </div>
+            <section class="profile-section">
+              <div class="profile-section-header">
+                <h3>Recent posts</h3>
+              </div>
+              <div class="mylife-alert">
+                <span>No posts yet</span>
+                <p>This citizen has not posted anything recent.</p>
+              </div>
+            </section>
           `}
         `;
 
     body.innerHTML = `
-      <div class="social-shell">
-        <div class="social-profile-card">
-          <div class="social-avatar" style="background-image: url('${escapeHtml(profileAvatarUrl)}')"></div>
-          <div class="social-profile-copy">
-            <strong>${escapeHtml(profileDisplayName)}</strong>
-            <span>${escapeHtml(profileDisplayHandle)} • Social profile</span>
+      <div class="shared-profile-shell">
+        <div class="profile-hero-panel">
+          <div class="profile-cover profile-cover-public">
+            <div class="profile-cover-actions">
+              <button type="button" class="profile-mini-button" aria-label="More citizen actions">⋯</button>
+            </div>
           </div>
-          <div class="social-profile-actions">
+
+          <div class="profile-avatar-wrap">
+            <div class="profile-avatar-ring">
+              <div class="profile-avatar-photo" style="background-image: url('${escapeHtml(profileAvatarUrl)}')"></div>
+            </div>
+          </div>
+
+          <div class="profile-main-header">
+            <div class="profile-header-row">
+              <div class="profile-identity">
+                <div class="profile-name-row">
+                  <h2>${escapeHtml(profileDisplayName)}</h2>
+                  <span class="profile-verified-badge" title="${escapeHtml(profileStatusText)}">${profileView.data?.current_user_following ? '✓' : '◉'}</span>
+                </div>
+                <div class="profile-role">${escapeHtml(getDisplayProfession(profileView.data?.profession, 'Citizen'))}</div>
+              </div>
+              <button type="button" class="profile-close-button" data-social-action="close-profile-view">Back</button>
+            </div>
+
+            ${profileFriendBadge}
+          </div>
+
+          <div class="profile-action-row">
             ${profileHeaderActions}
-            <button type="button" class="secondary-button" data-social-action="close-profile-view">Back to Feed</button>
           </div>
+
+          ${relationshipNotice?.message ? `
+            <div class="mylife-alert ${relationshipNotice.type === 'success' ? 'success' : ''}" role="status">
+              <p>${escapeHtml(relationshipNotice.message)}</p>
+            </div>
+          ` : ''}
+
         </div>
+
         ${profileBody}
       </div>
     `;
@@ -2995,7 +3242,7 @@ function renderSocialApp() {
   const handleOnboardingMarkup = socialState.handleOnboarding.open || !socialState.currentCitizenHandle ? `
     <div class="mylife-alert">
       <span>Choose your handle</span>
-      <p>Set a permanent @handle before you can post in Social Media.</p>
+      <p>Set a permanent @handle before you can post in FakeBook.</p>
       <div class="social-handle-onboarding">
         <input
           type="text"
@@ -3044,15 +3291,6 @@ function renderSocialApp() {
     feedMarkup = visiblePosts
       .map((post) => {
         const authorCitizenId = String(post.authorCitizenId || '');
-        const isFollowing = post.isCurrentUser || post.currentUserFollowingAuthor || socialState.followSet.has(authorCitizenId);
-        const followError = authorCitizenId ? socialState.followErrorByAuthor[authorCitizenId] || null : null;
-        const followPending = Boolean(authorCitizenId && socialState.pendingFollowAuthorIds.has(authorCitizenId));
-        const followButtonLabel = followPending
-          ? (isFollowing ? 'Following…' : 'Follow…')
-          : (isFollowing ? 'Following' : 'Follow');
-        const followButtonTitle = followError
-          ? `Follow failed: ${followError}`
-          : (isFollowing ? 'Click to unfollow this citizen' : 'Follow this citizen');
         const likeLabel = post.liked ? 'Liked' : 'Like';
         const postId = escapeHtml(String(post.id));
         const normalizedPostId = String(post.id ?? '');
@@ -3063,7 +3301,6 @@ function renderSocialApp() {
         const currentCitizenId = profileState.citizen?.id ? String(profileState.citizen.id) : null;
         const postOwnerCitizenId = post.authorCitizenId ? String(post.authorCitizenId) : null;
         const isOwnPost = Boolean(currentCitizenId && postOwnerCitizenId && postOwnerCitizenId === currentCitizenId);
-        const shouldRenderFollowButton = !isOwnPost && Boolean(authorCitizenId);
         const isEditing = Boolean(socialState.postEditOpenByPost[normalizedPostId]);
         const editDraft = socialState.postEditDraftByPost[normalizedPostId] ?? post.content;
         const editDraftLength = Array.from(String(editDraft || '')).length;
@@ -3093,21 +3330,6 @@ function renderSocialApp() {
                 </div>
               </button>
               <div class="social-post-header-actions">
-                ${shouldRenderFollowButton ? `
-                  <div class="social-follow-wrap">
-                    <button
-                      type="button"
-                      class="social-follow-toggle ${isFollowing ? 'following' : ''}"
-                      data-follow-author-id="${escapedAuthorCitizenId}"
-                      title="${escapeHtml(followButtonTitle)}"
-                      ${followPending ? 'disabled' : ''}
-                      aria-disabled="${String(Boolean(followPending))}"
-                    >
-                      ${followButtonLabel}
-                    </button>
-                    ${followError ? `<div class="social-post-editor-error">${escapeHtml(followError)}</div>` : ''}
-                  </div>
-                ` : ''}
                 ${isOwnPost ? `
                   <div class="social-post-menu-wrap">
                     <button
@@ -3246,6 +3468,13 @@ function renderSocialApp() {
 
   body.innerHTML = `
     <div class="social-shell">
+      <header class="social-header social-brand-header">
+        <div class="social-brand-lockup">
+          <img class="social-brand-mark" src="./images/icons/socialmedia.PNG" alt="FakeBook logo" />
+          <h3>FakeBook</h3>
+        </div>
+      </header>
+
       <div class="social-profile-card">
         <div class="social-avatar" style="background-image: url('${escapeHtml(currentUserAvatar)}')"></div>
         <div class="social-profile-copy">
@@ -3262,7 +3491,7 @@ function renderSocialApp() {
       </div>
 
       <div class="social-tabs" aria-label="Social media feed tabs">
-        <button type="button" class="social-tab ${socialState.activeTab === 'following' ? 'active' : ''}" data-social-tab="following">Following</button>
+        <button type="button" class="social-tab ${socialState.activeTab === 'associates' ? 'active' : ''}" data-social-tab="associates">Associates</button>
         <button type="button" class="social-tab ${socialState.activeTab === 'trending' ? 'active' : ''}" data-social-tab="trending">Trending</button>
         <button type="button" class="social-tab ${socialState.activeTab === 'latest' ? 'active' : ''}" data-social-tab="latest">Latest</button>
       </div>
@@ -3736,94 +3965,7 @@ function renderSocialApp() {
     });
   }
 
-  if (body && !body.dataset.profileViewNavigationBound) {
-    body.dataset.profileViewNavigationBound = 'true';
-    body.addEventListener('click', async (event) => {
-      const profileOpenButton = event.target.closest('[data-social-action="open-citizen-profile"]');
-      if (profileOpenButton) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const targetCitizenId = String(profileOpenButton.dataset.citizenId || '').trim();
-        if (!targetCitizenId) {
-          return;
-        }
-
-        await loadSocialProfileView(targetCitizenId);
-        return;
-      }
-
-      const closeProfileButton = event.target.closest('[data-social-action="close-profile-view"]');
-      if (closeProfileButton) {
-        closeSocialProfileView();
-      }
-
-      const messageProfileButton = event.target.closest('[data-social-action="message-profile"]');
-      if (messageProfileButton) {
-        event.preventDefault();
-        const targetCitizenId = String(messageProfileButton.dataset.targetCitizenId || '').trim();
-        if (!targetCitizenId || socialState.profileMessageBusyByCitizen[targetCitizenId]) {
-          return;
-        }
-
-        const profileHandle = formatSocialHandle(profileView.data?.handle || '@citizen', '@citizen');
-        const profileAvatarUrl = profileView.data?.avatar_url || './assets/avatars/aurelia-voss.svg';
-        await startProfileMessageAction(targetCitizenId, profileHandle, profileAvatarUrl);
-      }
-
-      const associateToggle = event.target.closest('[data-associate-action="toggle-profile-association"]');
-      if (associateToggle) {
-        event.preventDefault();
-        event.stopPropagation();
-        const targetCitizenId = String(associateToggle.dataset.targetCitizenId || '').trim();
-        if (!targetCitizenId) {
-          return;
-        }
-
-        const shouldOpen = !(associatesState.currentPickerTargetId === targetCitizenId && associatesState.currentPickerOpen);
-        associatesState.currentPickerTargetId = shouldOpen ? targetCitizenId : null;
-        associatesState.currentPickerOpen = shouldOpen;
-        renderSocialApp();
-        return;
-      }
-
-      const associateChoice = event.target.closest('[data-associate-action="set-association"]');
-      if (associateChoice) {
-        event.preventDefault();
-        event.stopPropagation();
-        const targetCitizenId = String(associateChoice.dataset.targetCitizenId || '').trim();
-        const relationshipType = String(associateChoice.dataset.relationshipType || '').trim();
-        if (!targetCitizenId || !relationshipType) {
-          return;
-        }
-
-        const success = await setCitizenRelationship(targetCitizenId, relationshipType);
-        if (success) {
-          associatesState.currentPickerTargetId = null;
-          associatesState.currentPickerOpen = false;
-          await loadSocialProfileView(targetCitizenId);
-        }
-        return;
-      }
-
-      const removeAssociationButton = event.target.closest('[data-associate-action="remove-association"]');
-      if (removeAssociationButton) {
-        event.preventDefault();
-        event.stopPropagation();
-        const targetCitizenId = String(removeAssociationButton.dataset.targetCitizenId || '').trim();
-        if (!targetCitizenId) {
-          return;
-        }
-
-        const success = await removeCitizenRelationship(targetCitizenId);
-        if (success) {
-          associatesState.currentPickerTargetId = null;
-          associatesState.currentPickerOpen = false;
-          await loadSocialProfileView(targetCitizenId);
-        }
-      }
-    });
-  }
+  bindGlobalCitizenProfileActions();
 
   const socialFeed = body.querySelector('.social-feed');
 
@@ -4950,16 +5092,7 @@ function ensureAppWindow(appId) {
     appWindow.className = 'app-window';
     appWindow.setAttribute('aria-label', `${appCatalog[appId].name} app`);
 
-    const icon = appCatalog[appId].icon;
-    const miniMark = icon.startsWith('.')
-      ? `<span class="mini-mark-image" style="background-image: url('${icon}'); background-size: cover; background-position: center; background-repeat: no-repeat;"></span>`
-      : `<span class="mini-mark">${icon}</span>`;
-
     appWindow.innerHTML = `
-      <header class="app-header">
-        <h3>${appCatalog[appId].name}</h3>
-        ${miniMark}
-      </header>
       <div class="app-body"></div>
     `;
     appLayer.appendChild(appWindow);
@@ -5025,6 +5158,7 @@ async function loadCitizenProfile() {
 
   profileState.citizen = citizen;
   profileState.private = privateRecord || null;
+  void ensureCurrentCitizenHandleStatus();
 
   if (!privateRecord) {
     player.balance = 'Unavailable';
@@ -5326,8 +5460,16 @@ const STORE_PRIORITY_PRODUCT_KEYS = new Map([
 
 function renderStoreApp() {
   const categoryMap = new Map(storeState.categories.map((category) => [category.id, category]));
+  const searchQuery = String(storeState.searchTerm || '').trim().toLowerCase();
   const filteredCatalog = storeState.catalog
     .filter((product) => categoryMap.has(product.category_id))
+    .filter((product) => storeState.selectedCategory === 'all' || categoryMap.get(product.category_id)?.category_key === storeState.selectedCategory)
+    .filter((product) => {
+      if (!searchQuery) {
+        return true;
+      }
+      return `${product.product_name || ''} ${product.description || ''}`.toLowerCase().includes(searchQuery);
+    })
     .sort((first, second) => {
       const firstRank = STORE_PRIORITY_PRODUCT_KEYS.has(first.product_key)
         ? STORE_PRIORITY_PRODUCT_KEYS.get(first.product_key)
@@ -5380,11 +5522,15 @@ function renderStoreApp() {
               <span class="store-product-pill ${status.tone}">${escapeHtml(status.label)}</span>
             </div>
             <h4>${escapeHtml(product.product_name)}</h4>
+            <div class="store-product-rating" aria-label="5 out of 5 fictional game rating">
+              <span>5.0</span><b aria-hidden="true">★★★★★</b><small>Game rating</small>
+            </div>
             <p>${escapeHtml(product.description || 'No description available.')}</p>
             <div class="store-product-row">
               <strong>${escapeHtml(priceText)}</strong>
               ${requirementText ? `<small>${escapeHtml(requirementText)}</small>` : ''}
             </div>
+            <span class="store-product-action">View details</span>
           </div>
         </article>
       `;
@@ -5403,19 +5549,16 @@ function renderStoreApp() {
   appBody.innerHTML = `
     <div class="store-shell">
       <div class="store-header">
-        <div>
-          <div class="section-kicker">Marketplace</div>
-          <h3>Store</h3>
-        </div>
-        <button type="button" class="store-refresh-button" data-store-refresh>Refresh</button>
+        <button type="button" class="store-back-affordance" aria-label="Back to home" data-store-home>‹</button>
+        <label class="store-search" for="storeSearchInput">
+          <span class="store-search-icon" aria-hidden="true">⌕</span>
+          <input id="storeSearchInput" type="search" value="${escapeHtml(storeState.searchTerm)}" placeholder="Search Tyranny Store" />
+        </label>
+        <button type="button" class="store-refresh-button" data-store-refresh aria-label="Refresh catalog">↻</button>
       </div>
 
-      <label class="store-search" for="storeSearchInput">
-        <span>Search products</span>
-        <input id="storeSearchInput" type="search" value="${escapeHtml(storeState.searchTerm)}" placeholder="Search the catalog..." />
-      </label>
-
       <div class="store-category-strip">
+        <span class="store-filter-icon" aria-hidden="true">☷</span>
         <button
           type="button"
           class="store-category ${storeState.selectedCategory === 'all' ? 'selected' : ''}"
@@ -5574,6 +5717,11 @@ function renderStoreApp() {
       loadStoreCatalog();
     });
   }
+
+  const homeButton = appBody.querySelector('[data-store-home]');
+  homeButton?.addEventListener('click', () => {
+    returnHome();
+  });
 
   const retryButton = appBody.querySelector('[data-store-retry]');
   if (retryButton) {
@@ -6579,6 +6727,17 @@ function renderLucky7App() {
 
   body.innerHTML = `
     <div class="lucky7-shell">
+      <div class="lucky7-topbar">
+        <div>
+          <div class="section-kicker">Casino</div>
+          <h3>LUCKY 7</h3>
+        </div>
+        <div class="lucky7-wallet-chip">
+          <span>Balance</span>
+          <strong>${formatLucky7Currency(profileState.private?.balance ?? 0)}</strong>
+        </div>
+      </div>
+
       <div class="lucky7-tabs">
         ${['slots', 'roulette', 'baccarat'].map((gameId) => `
           <button type="button" class="lucky7-tab ${lucky7State.selectedGame === gameId ? 'selected' : ''}" data-lucky7-game="${gameId}">${escapeHtml(gameConfig[gameId].name)}</button>
@@ -6869,10 +7028,13 @@ function renderVotingApp() {
 
   body.innerHTML = `
     <div class="voting-booth-shell">
-      ${votingState.loading ? '<div class="voting-booth-card"><div class="moneytree-empty-state"><strong>Loading ballots…</strong><p>Checking the current voting schedule and eligibility.</p></div></div>' : ''}
-      <div class="voting-booth-card">
-        <div class="moneytree-discussion-message ${votingState.ownerError ? 'error' : 'success'}">${escapeHtml(votingState.ownerError || 'Citizen ballot access is open.')}</div>
+      <div class="voting-booth-titlebar">
+        <div>
+          <h3>Voting Booth</h3>
+        </div>
       </div>
+
+      ${votingState.loading ? '<div class="voting-booth-card"><div class="moneytree-empty-state"><strong>Loading ballots…</strong><p>Checking the current voting schedule and eligibility.</p></div></div>' : ''}
 
       ${citizenPanel}
 
@@ -7288,9 +7450,7 @@ function renderAppContent(appId, mode = 'normal') {
 
   if (appId === 'associates') {
     renderAssociatesApp();
-    if (!associatesState.loading) {
-      loadAssociatesApp();
-    }
+    loadAssociatesApp();
     return;
   }
 
@@ -7303,6 +7463,10 @@ function renderAppContent(appId, mode = 'normal') {
   }
 
   if (appId === 'mylife') {
+    if (!socialState.currentCitizenHandle) {
+      void ensureCurrentCitizenHandleStatus();
+    }
+
     const citizen = profileState.citizen || {};
     const privateRecord = profileState.private || {};
     const avatarUrl = getCitizenAvatarUrl(citizen);
@@ -7314,6 +7478,7 @@ function renderAppContent(appId, mode = 'normal') {
     const accountStatus = privateRecord.account_status || 'Unavailable';
     const balanceValue = privateRecord.balance !== undefined && privateRecord.balance !== null ? formatCurrency(privateRecord.balance) : 'Unavailable';
     const createdAt = citizen.created_at ? new Date(citizen.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent';
+    const citizenHandle = formatSocialHandle(socialState.currentCitizenHandle || citizen.handle || '@citizen', '@citizen');
     const privateLoadError = profileState.privateLoadError ? `<div class="mylife-alert"><span>Profile unavailable</span><p>${profileState.privateLoadError}</p></div>` : '';
 
     if (profileState.isEditing) {
@@ -7388,58 +7553,44 @@ function renderAppContent(appId, mode = 'normal') {
     }
 
     const categoryCards = [
-      { key: 'career', title: 'Career', value: profession, icon: '◈', accent: '#5b7cff', description: 'Career path and work profile.' },
-      { key: 'education', title: 'Education', value: education, icon: '◍', accent: '#2bb673', description: 'Education status and records.' },
-      { key: 'skills', title: 'Career Path', value: 'Path overview', icon: '✦', accent: '#eb8a4f', description: 'Current progression and unlock pathway.' },
+      { key: 'skills', title: 'Career Path Tree', value: 'Path overview', icon: '✦', accent: '#eb8a4f', description: 'Current progression and unlock pathway.' },
       { key: 'assets', title: 'Assets', value: 'Personal assets', icon: '▣', accent: '#9a6ef8', description: 'Personal holdings and resources.' },
     ];
 
     body.innerHTML = `
-      <div class="mylife-shell">
+      <div class="shared-profile-shell profile-self-shell">
         ${privateLoadError}
 
-        <section class="mylife-header-card">
-          <div class="mylife-header-top">
-            <div class="mylife-avatar-lg" style="background-image: url('${avatarUrl}')"></div>
-            <button type="button" class="mylife-edit-button" data-action="edit-profile">Edit</button>
-          </div>
-
-          <div class="mylife-header-copy">
-            <div class="section-kicker">My identity</div>
-            <h2>${displayName}</h2>
-            <div class="mylife-header-meta">
-              <span>${citizen.citizen_id || 'Citizen ID unavailable'}</span>
-              <span>${profession}</span>
-              <span>${party}</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="mylife-panel">
-          <div class="mylife-panel-header">
-            <div>
-              <div class="section-kicker">My overview</div>
-              <h3>Account summary</h3>
+        <div class="profile-hero-panel">
+          <div class="profile-cover profile-cover-self">
+            <div class="profile-cover-actions">
+              <button type="button" class="profile-mini-button" data-action="edit-profile" aria-label="Edit profile">✎</button>
             </div>
           </div>
 
-          <div class="mylife-overview-grid">
-            <div class="mylife-stat-row"><span>Account balance</span><strong>${balanceValue}</strong></div>
-            <div class="mylife-stat-row"><span>Social class</span><strong>${socialClass}</strong></div>
-            <div class="mylife-stat-row"><span>Education</span><strong>${education}</strong></div>
-            <div class="mylife-stat-row"><span>Account status</span><strong>${accountStatus}</strong></div>
-            <div class="mylife-stat-row"><span>Registered</span><strong>${createdAt}</strong></div>
-          </div>
-        </section>
-
-        <section class="mylife-panel">
-          <div class="mylife-panel-header">
-            <div>
-              <div class="section-kicker">My life</div>
-              <h3>Life categories</h3>
+          <div class="profile-avatar-wrap">
+            <div class="profile-avatar-ring">
+              <div class="profile-avatar-photo" style="background-image: url('${avatarUrl}')"></div>
             </div>
           </div>
 
+          <div class="profile-main-header">
+            <div class="profile-header-row">
+              <div class="profile-identity">
+                <div class="profile-name-row">
+                  <h2>${displayName}</h2>
+                  <span class="profile-verified-badge" title="My profile">✓</span>
+                </div>
+                <div class="profile-role">${escapeHtml(citizenHandle)}</div>
+              </div>
+              <button type="button" class="profile-close-button" data-action="mylife-back">Back</button>
+            </div>
+
+          </div>
+
+        </div>
+
+        <section class="profile-section">
           <div class="mylife-category-grid">
             ${categoryCards
               .map(
@@ -7457,6 +7608,17 @@ function renderAppContent(appId, mode = 'normal') {
               .join('')}
           </div>
         </section>
+
+        <section class="profile-section">
+          <div class="profile-detail-list">
+            <div class="profile-detail-item"><span>Account balance</span><strong>${balanceValue}</strong></div>
+            <div class="profile-detail-item"><span>Employment status</span><strong>${profession}</strong></div>
+            <div class="profile-detail-item"><span>Social class</span><strong>${socialClass}</strong></div>
+            <div class="profile-detail-item"><span>Education</span><strong>${education}</strong></div>
+            <div class="profile-detail-item"><span>Account status</span><strong>${accountStatus}</strong></div>
+            <div class="profile-detail-item"><span>Registered</span><strong>${createdAt}</strong></div>
+          </div>
+        </section>
       </div>
     `;
 
@@ -7464,6 +7626,13 @@ function renderAppContent(appId, mode = 'normal') {
     if (editButton) {
       editButton.addEventListener('click', () => {
         profileState.isEditing = true;
+        renderAppContent('mylife');
+      });
+    }
+
+    const mylifeBackButton = body.querySelector('[data-action="mylife-back"]');
+    if (mylifeBackButton) {
+      mylifeBackButton.addEventListener('click', () => {
         renderAppContent('mylife');
       });
     }
@@ -7485,13 +7654,38 @@ function renderAppContent(appId, mode = 'normal') {
         }
 
         const categoryConfig = {
-          career: { title: 'Career', icon: '◈', accent: '#5b7cff', summary: 'Career path overview', description: profession, empty: 'No career data is available yet.', isTree: true },
-          education: { title: 'Education', icon: '◍', accent: '#2bb673', summary: 'Education status', description: education, empty: 'No education records are available yet.' },
-          skills: { title: 'Career Path', icon: '✦', accent: '#eb8a4f', summary: 'Career path tree', description: 'Current progression and unlock pathway.', empty: 'No career path data is available yet.', isTree: true },
-          assets: { title: 'Assets', icon: '▣', accent: '#9a6ef8', summary: 'Personal assets', description: 'No personal asset system is active yet.', empty: 'No asset information is available yet.' },
+          skills: { title: 'Career Path Tree', icon: '✦', accent: '#eb8a4f', summary: 'Career path tree', description: 'Current progression and unlock pathway.', empty: 'No career path data is available yet.', isTree: true },
+          assets: { title: 'Assets', icon: '▣', accent: '#9a6ef8', summary: 'Personal assets', description: 'No personal asset system is active yet.', empty: 'No asset information is available yet.', isEmpty: true },
         };
 
-        const config = categoryConfig[category] || categoryConfig.career;
+        const config = categoryConfig[category] || categoryConfig.skills;
+
+        if (config.isEmpty) {
+          body.innerHTML = `
+            <div class="mylife-shell mylife-detail-shell">
+              <div class="mylife-detail-top">
+                <button type="button" class="mylife-back-button" data-action="mylife-back">‹ MyLife</button>
+                <div class="mylife-detail-title-wrap">
+                  <span class="mylife-detail-icon" style="background:${config.accent};">${config.icon}</span>
+                  <div>
+                    <div class="section-kicker">My life</div>
+                    <h3>${config.title}</h3>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mylife-detail-empty">
+                <strong>No assets required yet</strong>
+                <p>There are no active asset requirements for this citizen at the moment.</p>
+              </div>
+            </div>
+          `;
+
+          body.querySelector('[data-action="mylife-back"]').addEventListener('click', () => {
+            renderAppContent('mylife');
+          });
+          return;
+        }
 
         if (config.isTree) {
           const supabase = getAuthClient();
@@ -7617,6 +7811,8 @@ function renderAppContent(appId, mode = 'normal') {
 
     const moneytreeState = {
       discussions: [],
+      dashboardData: null,
+      dashboardLoading: false,
       selectedDiscussionId: null,
       selectedDiscussionFeed: [],
       selectedDiscussionFeedLoading: false,
@@ -7640,6 +7836,64 @@ function renderAppContent(appId, mode = 'normal') {
       clockInSubmitting: false,
       clockInNotice: null,
       clockInTimer: null,
+      contributorNameCache: moneytreeContributorNameCache,
+    };
+
+    window.__moneytreeState = moneytreeState;
+
+    const hydrateMoneytreeContributorNames = async (contributions) => {
+      const items = Array.isArray(contributions) ? contributions : [];
+      const citizenIds = [...new Set(items
+        .map((item) => String(item?.citizen_id ?? item?.contributor_citizen_id ?? item?.author_citizen_id ?? '').trim())
+        .filter(Boolean)
+        .filter((citizenId) => !moneytreeState.contributorNameCache.has(citizenId)))];
+
+      if (!citizenIds.length) {
+        return items.map((item) => ({
+          ...item,
+          contributor_public_name: item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || 'Citizen',
+        }));
+      }
+
+      const supabase = getAuthClient();
+      if (!supabase) {
+        return items.map((item) => ({
+          ...item,
+          contributor_public_name: item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || 'Citizen',
+        }));
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('citizens')
+          .select('id, public_name')
+          .in('id', citizenIds);
+
+        if (error) {
+          throw error;
+        }
+
+        const rows = Array.isArray(data) ? data : [];
+        rows.forEach((row) => {
+          const id = String(row?.id ?? '').trim();
+          const publicName = String(row?.public_name || 'Citizen').trim() || 'Citizen';
+          if (id) {
+            moneytreeState.contributorNameCache.set(id, publicName);
+          }
+        });
+      } catch (error) {
+        console.warn('MoneyTree contributor lookup failed:', error);
+      }
+
+      return items.map((item) => {
+        const citizenId = String(item?.citizen_id ?? item?.contributor_citizen_id ?? item?.author_citizen_id ?? '').trim();
+        const cachedName = citizenId ? moneytreeState.contributorNameCache.get(citizenId) : null;
+        return {
+          ...item,
+          contributor_public_name: item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || cachedName || 'Citizen',
+          citizen_id: citizenId || item?.citizen_id || null,
+        };
+      });
     };
 
     const getDiscussionContributionType = (discussion) => {
@@ -7760,6 +8014,17 @@ function renderAppContent(appId, mode = 'normal') {
 
       const roots = sortedItems.filter((item) => !item.parent_contribution_id || !byId.has(String(item.parent_contribution_id)));
 
+      const getAuthorMarkup = (item) => {
+        const citizenId = String(item?.contributor_citizen_id ?? item?.citizen_id ?? item?.author_citizen_id ?? '').trim();
+        const publicName = String(item?.contributor_public_name ?? item?.public_name ?? item?.author_public_name ?? item?.citizen_name ?? 'Citizen').trim() || 'Citizen';
+
+        if (citizenId) {
+          return `<button type="button" class="moneytree-thread-author-button" data-social-action="open-citizen-profile" data-citizen-id="${escapeHtml(citizenId)}">${escapeHtml(publicName)}</button>`;
+        }
+
+        return `<span class="moneytree-thread-author">${escapeHtml(publicName)}</span>`;
+      };
+
       const renderChallengeEntry = (item, depth = 0) => {
         const childItems = (childrenByParent.get(String(item.id)) || []).sort((a, b) => {
           const left = new Date(a.created_at || 0).getTime();
@@ -7767,7 +8032,7 @@ function renderAppContent(appId, mode = 'normal') {
           return left - right;
         });
         const content = typeof item.content === 'string' ? item.content : '';
-        const authorLabel = item.citizen_id ? `Citizen ${String(item.citizen_id).slice(0, 8)}` : 'Citizen';
+        const authorLabel = getAuthorMarkup(item);
         const moderationState = typeof item.moderation_state === 'string' ? item.moderation_state : 'pending';
         const statusLabel = moderationState === 'approved'
           ? 'Approved'
@@ -7815,7 +8080,7 @@ function renderAppContent(appId, mode = 'normal') {
           <div class="moneytree-challenge-entry" style="margin-left:${depth * 12}px;" data-contribution-id="${escapeHtml(item.id || '')}">
             <div class="moneytree-thread-header">
               <div class="moneytree-thread-meta">
-                <span class="moneytree-thread-author">${escapeHtml(authorLabel)}</span>
+                ${authorLabel}
                 <span class="moneytree-thread-date">${escapeHtml(item.created_at ? new Date(item.created_at).toLocaleDateString('en-US', {
                   month: 'short',
                   day: 'numeric',
@@ -7849,7 +8114,7 @@ function renderAppContent(appId, mode = 'normal') {
           return left - right;
         });
         const content = typeof item.content === 'string' ? item.content : '';
-        const authorLabel = item.citizen_id ? `Citizen ${String(item.citizen_id).slice(0, 8)}` : 'Citizen';
+        const authorLabel = getAuthorMarkup(item);
         const moderationState = typeof item.moderation_state === 'string' ? item.moderation_state : 'pending';
         const statusLabel = moderationState === 'approved'
           ? 'Approved'
@@ -7897,7 +8162,7 @@ function renderAppContent(appId, mode = 'normal') {
           <article class="moneytree-thread-card moneytree-contribution-card" data-contribution-id="${escapeHtml(item.id || '')}">
             <div class="moneytree-thread-header">
               <div class="moneytree-thread-meta">
-                <span class="moneytree-thread-author">${escapeHtml(authorLabel)}</span>
+                ${authorLabel}
                 <span class="moneytree-thread-date">${escapeHtml(item.created_at ? new Date(item.created_at).toLocaleDateString('en-US', {
                   month: 'short',
                   day: 'numeric',
@@ -7971,7 +8236,8 @@ function renderAppContent(appId, mode = 'normal') {
           throw new Error(payload?.error || 'Unable to load discussion answers.');
         }
 
-        moneytreeState.selectedDiscussionFeed = Array.isArray(payload?.contributions) ? payload.contributions : [];
+        const hydratedContributions = await hydrateMoneytreeContributorNames(payload?.contributions);
+        moneytreeState.selectedDiscussionFeed = Array.isArray(hydratedContributions) ? hydratedContributions : [];
         moneytreeState.selectedDiscussionFeedError = null;
       } catch (error) {
         console.error('MoneyTree discussion feed load failed:', error);
@@ -8435,22 +8701,36 @@ function renderAppContent(appId, mode = 'normal') {
       const modalScrollTop = document.querySelector('.moneytree-modal')?.scrollTop || 0;
 
       body.innerHTML = `
-        <div class="moneytree-dashboard">
-          <div class="moneytree-summary-grid">
-            <div class="moneytree-stat-card moneytree-balance-card">
-              <span class="moneytree-stat-label">Available Balance</span>
-              <strong class="moneytree-stat-value">${formatMoney(availableBalance)}</strong>
+        <div class="moneytree-reference-shell">
+          <header class="moneytree-app-header">
+            <div class="moneytree-brand-lockup">
+              <img class="moneytree-brand-mark" src="./images/icons/moneytree.PNG" alt="MoneyTree logo" />
+              <div class="moneytree-brand-title">MoneyTree</div>
             </div>
-            <div class="moneytree-stat-card moneytree-pending-card">
-              <span class="moneytree-stat-label">Pending Earnings</span>
-              <strong class="moneytree-stat-value">${formatMoney(pendingEarnings)}</strong>
-              <small>Not spendable yet</small>
+            <div class="moneytree-header-actions">
+              <button type="button" class="moneytree-icon-button" data-action="moneytree-refresh" aria-label="Refresh MoneyTree" title="Refresh MoneyTree">↻</button>
+            </div>
+          </header>
+
+          <section class="moneytree-hero" aria-label="MoneyTree account overview">
+            <span class="moneytree-stat-label">Available balance</span>
+            <strong class="moneytree-hero-balance">${formatMoney(availableBalance)}</strong>
+            <span class="moneytree-hero-subtitle">Money earned through your Tyranny: Rise to Power activity.</span>
+            <span class="moneytree-pending-inline">Pending earnings: ${formatMoney(pendingEarnings)}</span>
+          </section>
+
+          <div class="moneytree-next-step" data-moneytree-clockin-section>
+            <div class="moneytree-next-step-copy">
+              <span class="moneytree-next-step-kicker">Welcome to MoneyTree Network!!</span>
+              <h3>This is where you start to make your money.</h3>
+              <p>We have gig work available to the general public, where you can get paid to participate in intelligent discussions.</p>
+              <p>You can also get a bonus every hour for clocking in on time!!</p>
             </div>
           </div>
 
-          ${clockInMarkup}
+          <div class="moneytree-clockin-anchor">${clockInMarkup}</div>
 
-          <div class="moneytree-panel moneytree-discussion-panel">
+          <div class="moneytree-panel moneytree-discussion-panel" data-moneytree-discussions-section>
             <div class="moneytree-panel-header">
               <h4>Available Discussions</h4>
               <button type="button" class="moneytree-refresh-button" data-action="moneytree-refresh">Refresh</button>
@@ -8461,18 +8741,23 @@ function renderAppContent(appId, mode = 'normal') {
             </div>
           </div>
 
-          <div class="moneytree-panel">
+          <div class="moneytree-panel" data-moneytree-activity-section>
             <div class="moneytree-panel-header">
               <h4>Discussion Activity</h4>
             </div>
-            <div class="moneytree-activity-list">
-              ${activityMarkup}
-            </div>
+            <div class="moneytree-activity-list">${activityMarkup}</div>
           </div>
 
           ${moderationMarkup}
 
           ${selectedDiscussionModalMarkup}
+
+          <nav class="moneytree-bottom-nav" aria-label="MoneyTree navigation">
+            <button type="button" class="moneytree-bottom-nav-item active" data-action="moneytree-scroll-top"><span aria-hidden="true">⌂</span>Home</button>
+            <button type="button" class="moneytree-bottom-nav-item" data-action="moneytree-scroll-discussions"><span aria-hidden="true">✦</span>Earn</button>
+            <button type="button" class="moneytree-bottom-nav-item" data-action="moneytree-scroll-activity"><span aria-hidden="true">◷</span>Activity</button>
+            <button type="button" class="moneytree-bottom-nav-item" data-action="moneytree-refresh"><span aria-hidden="true">↻</span>Refresh</button>
+          </nav>
         </div>
       `;
 
@@ -8481,8 +8766,7 @@ function renderAppContent(appId, mode = 'normal') {
         restoredModal.scrollTop = modalScrollTop;
       }
 
-      const refreshButton = body.querySelector('[data-action="moneytree-refresh"]');
-      if (refreshButton) {
+      body.querySelectorAll('[data-action="moneytree-refresh"]').forEach((refreshButton) => {
         refreshButton.addEventListener('click', async () => {
           moneytreeState.submitError = null;
           moneytreeState.submitSuccess = null;
@@ -8492,7 +8776,24 @@ function renderAppContent(appId, mode = 'normal') {
           moneytreeState.clockInNotice = null;
           await loadMoneytreeView();
         });
-      }
+      });
+
+      const scrollToMoneytreeSection = (selector) => {
+        body.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+
+      body.querySelectorAll('[data-action="moneytree-scroll-clockin"]').forEach((button) => {
+        button.addEventListener('click', () => scrollToMoneytreeSection('.moneytree-clockin-anchor'));
+      });
+      body.querySelectorAll('[data-action="moneytree-scroll-discussions"]').forEach((button) => {
+        button.addEventListener('click', () => scrollToMoneytreeSection('[data-moneytree-discussions-section]'));
+      });
+      body.querySelectorAll('[data-action="moneytree-scroll-activity"]').forEach((button) => {
+        button.addEventListener('click', () => scrollToMoneytreeSection('[data-moneytree-activity-section]'));
+      });
+      body.querySelectorAll('[data-action="moneytree-scroll-top"]').forEach((button) => {
+        button.addEventListener('click', () => scrollToMoneytreeSection('.moneytree-reference-shell'));
+      });
 
       const clockInButton = body.querySelector('[data-action="moneytree-clock-in"]');
       if (clockInButton) {
@@ -8726,34 +9027,58 @@ function renderAppContent(appId, mode = 'normal') {
     };
 
     const renderLoadingState = () => {
+      const placeholderBalance = formatMoney(Number(moneytreeState.dashboardData?.available_balance ?? 0));
+      const placeholderPending = formatMoney(Number(moneytreeState.dashboardData?.pending_earnings ?? 0));
+
       body.innerHTML = `
-        <div class="moneytree-dashboard">
-          <div class="moneytree-summary-grid">
-            <div class="moneytree-stat-card moneytree-balance-card">
-              <span class="moneytree-stat-label">Available Balance</span>
-              <strong class="moneytree-stat-value">Loading...</strong>
+        <div class="moneytree-reference-shell moneytree-loading-shell">
+          <header class="moneytree-app-header">
+            <div class="moneytree-brand-lockup">
+              <img class="moneytree-brand-mark" src="./images/icons/moneytree.PNG" alt="MoneyTree logo" />
+              <div class="moneytree-brand-title">MoneyTree</div>
             </div>
-            <div class="moneytree-stat-card moneytree-pending-card">
-              <span class="moneytree-stat-label">Pending Earnings</span>
-              <strong class="moneytree-stat-value">Loading...</strong>
-              <small>Not spendable yet</small>
+            <div class="moneytree-header-actions">
+              <button type="button" class="moneytree-icon-button" data-action="moneytree-refresh" aria-label="Refresh MoneyTree" title="Refresh MoneyTree">↻</button>
+            </div>
+          </header>
+
+          <section class="moneytree-hero" aria-label="MoneyTree account overview">
+            <span class="moneytree-stat-label">Available balance</span>
+            <strong class="moneytree-hero-balance">${escapeHtml(placeholderBalance)}</strong>
+            <span class="moneytree-hero-subtitle">Money earned through your Tyranny: Rise to Power activity.</span>
+            <span class="moneytree-pending-inline">Pending earnings: ${escapeHtml(placeholderPending)}</span>
+          </section>
+
+          <div class="moneytree-next-step" data-moneytree-clockin-section>
+            <div class="moneytree-next-step-copy">
+              <span class="moneytree-next-step-kicker">Welcome to MoneyTree Network!!</span>
+              <h3>This is where you start to make your money.</h3>
+              <p>We have gig work available to the general public, where you can get paid to participate in intelligent discussions.</p>
+              <p>You can also get a bonus every hour for clocking in on time!!</p>
             </div>
           </div>
 
-          <div class="moneytree-panel moneytree-discussion-panel">
+          <div class="moneytree-panel moneytree-discussion-panel" data-moneytree-discussions-section>
             <div class="moneytree-panel-header">
               <h4>Available Discussions</h4>
               <button type="button" class="moneytree-refresh-button" data-action="moneytree-refresh">Refresh</button>
             </div>
-            <div class="moneytree-empty-state"><strong>Loading discussions…</strong></div>
+            <div class="moneytree-empty-state"><strong>Loading discussions…</strong><p>Fetching the latest MoneyTree questions.</p></div>
           </div>
 
-          <div class="moneytree-panel">
+          <div class="moneytree-panel" data-moneytree-activity-section>
             <div class="moneytree-panel-header">
               <h4>Discussion Activity</h4>
             </div>
             <div class="moneytree-empty-state"><strong>Loading your dashboard…</strong></div>
           </div>
+
+          <nav class="moneytree-bottom-nav" aria-label="MoneyTree navigation">
+            <button type="button" class="moneytree-bottom-nav-item active" data-action="moneytree-scroll-top"><span aria-hidden="true">⌂</span>Home</button>
+            <button type="button" class="moneytree-bottom-nav-item" data-action="moneytree-scroll-discussions"><span aria-hidden="true">✦</span>Earn</button>
+            <button type="button" class="moneytree-bottom-nav-item" data-action="moneytree-scroll-activity"><span aria-hidden="true">◷</span>Activity</button>
+            <button type="button" class="moneytree-bottom-nav-item" data-action="moneytree-refresh"><span aria-hidden="true">↻</span>Refresh</button>
+          </nav>
         </div>
       `;
 
@@ -8765,6 +9090,7 @@ function renderAppContent(appId, mode = 'normal') {
           moneytreeState.submitDraft = '';
           moneytreeState.submitRequestId = null;
           moneytreeState.submitting = false;
+          moneytreeState.clockInNotice = null;
           await loadMoneytreeView();
         });
       }
@@ -8822,15 +9148,17 @@ function renderAppContent(appId, mode = 'normal') {
     };
 
     const loadMoneytreeView = async () => {
-      renderLoadingState();
+      if (moneytreeState.dashboardLoading) {
+        return moneytreeState.dashboardLoading;
+      }
 
-      const supabase = getAuthClient();
-      const session = (await supabase?.auth.getSession())?.data?.session;
-      const hasValidSession = Boolean(supabase && session?.user);
+      const sessionRequest = getAuthClient();
+      const session = (await sessionRequest?.auth.getSession())?.data?.session;
+      const hasValidSession = Boolean(sessionRequest && session?.user);
 
-      if (!supabase || !session?.user) {
+      if (!sessionRequest || !session?.user) {
         console.warn('MoneyTree dashboard request blocked: no valid authenticated session.', {
-          hasSupabaseClient: Boolean(supabase),
+          hasSupabaseClient: Boolean(sessionRequest),
           hasValidSession,
           sessionUserId: session?.user?.id ? '[redacted]' : null,
         });
@@ -8838,8 +9166,8 @@ function renderAppContent(appId, mode = 'normal') {
         return;
       }
 
-      try {
-        const { data, error } = await supabase.functions.invoke('get-moneytree-dashboard', {
+      const dashboardRequest = async () => {
+        const { data, error } = await sessionRequest.functions.invoke('get-moneytree-dashboard', {
           method: 'GET',
         });
 
@@ -8868,34 +9196,69 @@ function renderAppContent(appId, mode = 'normal') {
           throw error;
         }
 
-        await loadClockInStatus();
-        const discussions = await loadActiveDiscussions();
-        await loadModeratorQueue();
-        renderDashboard(data || {}, discussions);
-      } catch (error) {
-        const httpStatus = Number(error?.status ?? 0);
-        const responseBody = typeof error?.context === 'object' && error.context !== null
-          ? error.context
-          : (typeof error?.message === 'string' ? { message: error.message } : {});
+        return data || {};
+      };
 
-        console.error('MoneyTree dashboard load failed:', {
-          functionName: 'get-moneytree-dashboard',
-          httpStatus: httpStatus || 'unknown',
-          hasValidSession,
-          responseBody,
-          supabaseError: {
-            name: error?.name || 'Error',
-            message: error?.message || 'Unknown error',
-            status: error?.status || null,
-            details: error?.details || null,
-            hint: error?.hint || null,
-            code: error?.code || null,
-          },
-          corsRejected: Boolean(httpStatus === 403 && typeof error?.message === 'string' && error.message.toLowerCase().includes('origin')),
-          authorizationRejected: Boolean(httpStatus === 401 || httpStatus === 403),
-        });
-        renderErrorState('We couldn\'t load your MoneyTree information. Please try again.');
-      }
+      const essentialsPromise = async () => {
+        const [dashboardData, clockInStatus] = await Promise.allSettled([
+          dashboardRequest(),
+          loadClockInStatus(),
+        ]);
+
+        if (dashboardData.status === 'rejected') {
+          throw dashboardData.reason;
+        }
+
+        if (dashboardData.status === 'fulfilled') {
+          moneytreeState.dashboardData = dashboardData.value || {};
+        }
+
+        if (clockInStatus.status === 'fulfilled' && clockInStatus.value) {
+          moneytreeState.clockInStatus = clockInStatus.value;
+        }
+
+        return moneytreeState.dashboardData;
+      };
+
+      moneytreeState.dashboardLoading = (async () => {
+        renderLoadingState();
+
+        try {
+          const dashboardData = await essentialsPromise();
+          const discussions = await loadActiveDiscussions();
+          await loadModeratorQueue();
+          renderDashboard(dashboardData || {}, discussions);
+          return dashboardData || {};
+        } catch (error) {
+          const httpStatus = Number(error?.status ?? 0);
+          const responseBody = typeof error?.context === 'object' && error.context !== null
+            ? error.context
+            : (typeof error?.message === 'string' ? { message: error.message } : {});
+
+          console.error('MoneyTree dashboard load failed:', {
+            functionName: 'get-moneytree-dashboard',
+            httpStatus: httpStatus || 'unknown',
+            hasValidSession,
+            responseBody,
+            supabaseError: {
+              name: error?.name || 'Error',
+              message: error?.message || 'Unknown error',
+              status: error?.status || null,
+              details: error?.details || null,
+              hint: error?.hint || null,
+              code: error?.code || null,
+            },
+            corsRejected: Boolean(httpStatus === 403 && typeof error?.message === 'string' && error.message.toLowerCase().includes('origin')),
+            authorizationRejected: Boolean(httpStatus === 401 || httpStatus === 403),
+          });
+          renderErrorState('We couldn\'t load your MoneyTree information. Please try again.');
+          return {};
+        } finally {
+          moneytreeState.dashboardLoading = false;
+        }
+      })();
+
+      return moneytreeState.dashboardLoading;
     };
 
     if (moneytreeState.clockInTimer) {
@@ -10617,6 +10980,24 @@ function renderAppContent(appId, mode = 'normal') {
       year: 'numeric',
     }).format(new Date());
 
+    const renderLocalNewsMasthead = () => `
+      <header class="localnews-masthead">
+        <div class="localnews-brandbar">
+          <div class="localnews-brand">
+            <span class="brand-mark">TYRANNY NEWS</span>
+            <span class="brand-sub">TODAY</span>
+          </div>
+          <span class="localnews-edition-label">Local edition</span>
+        </div>
+        <div class="localnews-date-display">${escapeHtml(todaysDate)}</div>
+        <nav class="localnews-nav" aria-label="News categories">
+          ${localNewsCategories.map((category) => `
+            <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
+          `).join('')}
+        </nav>
+      </header>
+    `;
+
     const renderLocalNewsShell = () => {
       const selectedArticle = localNewsState.articles.find((article) => article.id === localNewsState.activeArticleId) || null;
 
@@ -10645,24 +11026,7 @@ function renderAppContent(appId, mode = 'normal') {
       if (!localNewsState.articles.length) {
         body.innerHTML = `
           <div class="localnews-page">
-            <header class="localnews-masthead">
-              <div class="localnews-topline">
-                <span>Edition</span>
-                <span>${escapeHtml(todaysDate)}</span>
-              </div>
-              <div class="localnews-brandbar">
-                <div class="localnews-brand">
-                  <span class="brand-mark">TYRANNY</span>
-                  <span class="brand-sub">DAILY</span>
-                </div>
-                <div class="localnews-date-pill">${escapeHtml(todaysDate)}</div>
-              </div>
-              <nav class="localnews-nav" aria-label="News categories">
-                ${localNewsCategories.map((category) => `
-                  <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
-                `).join('')}
-              </nav>
-            </header>
+            ${renderLocalNewsMasthead()}
             <div class="news-card localnews-shell">
               <div class="moneytree-empty-state"><strong>No published coverage yet.</strong><p>The newsroom has not published any stories.</p></div>
             </div>
@@ -10693,24 +11057,7 @@ function renderAppContent(appId, mode = 'normal') {
       if (localNewsState.detailOpen && selectedArticle) {
         body.innerHTML = `
           <div class="localnews-page">
-            <header class="localnews-masthead">
-              <div class="localnews-topline">
-                <span>Edition</span>
-                <span>${escapeHtml(todaysDate)}</span>
-              </div>
-              <div class="localnews-brandbar">
-                <div class="localnews-brand">
-                  <span class="brand-mark">TYRANNY</span>
-                  <span class="brand-sub">DAILY</span>
-                </div>
-                <div class="localnews-date-pill">${escapeHtml(todaysDate)}</div>
-              </div>
-              <nav class="localnews-nav" aria-label="News categories">
-                ${localNewsCategories.map((category) => `
-                  <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
-                `).join('')}
-              </nav>
-            </header>
+            ${renderLocalNewsMasthead()}
 
             <div class="news-card localnews-shell">
               <div class="localnews-article-reading">
@@ -10752,26 +11099,10 @@ function renderAppContent(appId, mode = 'normal') {
 
       body.innerHTML = `
         <div class="localnews-page">
-          <header class="localnews-masthead">
-            <div class="localnews-topline">
-              <span>Edition</span>
-              <span>${escapeHtml(todaysDate)}</span>
-            </div>
-            <div class="localnews-brandbar">
-              <div class="localnews-brand">
-                <span class="brand-mark">TYRANNY</span>
-                <span class="brand-sub">DAILY</span>
-              </div>
-              <div class="localnews-date-pill">${escapeHtml(todaysDate)}</div>
-            </div>
-            <nav class="localnews-nav" aria-label="News categories">
-              ${localNewsCategories.map((category) => `
-                <button type="button" class="localnews-category ${localNewsState.activeCategory === category ? 'active' : ''}" data-action="localnews-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>
-              `).join('')}
-            </nav>
-          </header>
+          ${renderLocalNewsMasthead()}
 
           <main class="localnews-homepage">
+            <div class="localnews-top-stories-title">Top Stories</div>
             <section class="localnews-featured-story">
               ${leadArticle ? `
                 <button type="button" class="localnews-story-lead" data-action="localnews-open-article" data-article-id="${escapeHtml(leadArticle.id || '')}">
@@ -10937,7 +11268,7 @@ function renderAppContent(appId, mode = 'normal') {
 
 function openApp(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
-  const shouldRefreshApp = appId === 'moderator' || appId === 'voting' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
+  const shouldRefreshApp = appId === 'moderator' || appId === 'voting' || appId === 'associates' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
 
   if (shouldRefreshApp) {
     renderAppContent(appId, mode);
@@ -11164,34 +11495,58 @@ async function handleRecoveryCallback() {
 }
 
 async function handleAuthSession() {
+  authState.initializing = true;
+  authState.ready = false;
+
   const supabase = window.TYRANNY_SUPABASE;
   if (!supabase) {
     setAuthMessage('Supabase is not available. Please check the client setup.', 'error');
     showAuthView('login');
+    authState.initializing = false;
     return;
   }
 
   if (isRecoveryUrl()) {
     await handleRecoveryCallback();
+    authState.initializing = false;
+    authState.ready = Boolean(window.TYRANNY_SUPABASE && window.TYRANNY_SUPABASE.auth);
     return;
   }
 
   try {
     const { data: { session }, error } = await supabase.auth.getSession();
+    const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
+    diagnostics.projectUrl = window.TYRANNY_SUPABASE_CONFIG?.url ?? null;
+    diagnostics.persistedSessionKeys = Object.keys(localStorage).filter((key) => /supabase|sb-|auth/.test(key)).length;
+    diagnostics.lastUpdatedAt = new Date().toISOString();
+
     if (error) {
+      diagnostics.sessionExists = false;
+      diagnostics.userId = null;
       setAuthMessage(error.message || 'Authentication error.', 'error');
       showAuthView('login');
+      authState.initializing = false;
+      authState.ready = false;
       return;
     }
 
     if (!session) {
+      diagnostics.sessionExists = false;
+      diagnostics.userId = null;
       showAuthView('login');
+      authState.initializing = false;
+      authState.ready = false;
       return;
     }
+
+    diagnostics.sessionExists = true;
+    diagnostics.userId = session.user?.id ?? null;
 
     const user = session.user;
     if (!user || !user.email) {
       showAuthView('login');
+      authState.initializing = false;
+      authState.ready = false;
       return;
     }
 
@@ -11199,18 +11554,34 @@ async function handleAuthSession() {
       authState.pendingEmail = user.email;
       verifyEmailText.textContent = `A verification email was sent to ${user.email}.`;
       showAuthView('verify');
+      authState.initializing = false;
+      authState.ready = true;
       return;
     }
 
     const citizenStatus = await checkCitizenRecord(session);
     if (citizenStatus === null) {
       showAuthView('login');
+      authState.initializing = false;
+      authState.ready = false;
       return;
     }
 
     if (!citizenStatus) {
       showCitizenSetup();
+      authState.initializing = false;
+      authState.ready = true;
       return;
+    }
+
+    moneytreeContributorNameCache.clear();
+    if (typeof window !== 'undefined') {
+      const currentMoneytreeState = window.__moneytreeState;
+      if (currentMoneytreeState) {
+        currentMoneytreeState.selectedDiscussionFeed = [];
+        currentMoneytreeState.selectedDiscussionFeedError = null;
+        currentMoneytreeState.selectedDiscussionFeedLoading = false;
+      }
     }
 
     await loadCitizenProfile();
@@ -11222,10 +11593,18 @@ async function handleAuthSession() {
     lockScreen.classList.remove('hidden');
     homeScreen.classList.add('hidden');
     setAuthMessage('', '');
+    authState.initializing = false;
+    authState.ready = true;
   } catch (error) {
     console.error('session handling failed', error);
+    const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
+    diagnostics.sessionExists = false;
+    diagnostics.userId = null;
+    diagnostics.lastUpdatedAt = new Date().toISOString();
     setAuthMessage('Unable to verify your session right now.', 'error');
     showAuthView('login');
+    authState.initializing = false;
+    authState.ready = false;
   }
 }
 
@@ -11324,13 +11703,24 @@ async function handleLogin(event) {
     }
 
     await loadCitizenProfile();
+    await refreshModeratorAppVisibility();
+
+    const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
+    diagnostics.sessionExists = Boolean(data.session);
+    diagnostics.userId = data.user.id;
+    diagnostics.persistedSessionKeys = Object.keys(localStorage).filter((key) => /supabase|sb-|auth/.test(key)).length;
+    diagnostics.lastUpdatedAt = new Date().toISOString();
 
     setAuthMessage('', '');
     showAuthView('login');
     authScreen.classList.add('hidden');
     lockScreen.classList.remove('hidden');
+    authState.initializing = false;
+    authState.ready = true;
   } catch (error) {
     console.error('login failed', error);
+    authState.initializing = false;
+    authState.ready = false;
     setAuthMessage('Login failed. Please try again.', 'error');
   }
 }
@@ -11688,11 +12078,6 @@ function initializePhone() {
   document.getElementById('floatingHome').addEventListener('click', () => {
     returnHome();
     authScreen.classList.add('hidden');
-  });
-
-  document.getElementById('dockPhone').addEventListener('click', () => {
-    returnHome();
-    closeSettingsMenu();
   });
 
   document.getElementById('dockMessages').addEventListener('click', () => {

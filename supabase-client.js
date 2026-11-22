@@ -23,6 +23,15 @@
     },
   });
 
+  window.TYRANNY_AUTH_DIAGNOSTICS = {
+    projectUrl: supabaseUrl,
+    sessionExists: false,
+    userId: null,
+    persistedSessionKeys: Object.keys(localStorage).filter((key) => /supabase|sb-|auth/.test(key)).length,
+    initializedAt: new Date().toISOString(),
+    lastUpdatedAt: null,
+  };
+
   window.TYRANNY_SUPABASE.__health = async function () {
     try {
       const { data, error } = await window.TYRANNY_SUPABASE.auth.getSession();
