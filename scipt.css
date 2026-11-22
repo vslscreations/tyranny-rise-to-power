@@ -75,7 +75,7 @@ button {
 
 .status-bar {
   position: absolute;
-  top: -6px;
+  top: -2px;
   left: 0;
   right: 0;
   display: flex;
