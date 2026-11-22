@@ -7671,3 +7671,129 @@ button {
   #app-localnews .localnews-article-reading { padding-right: 32px; padding-left: 32px; }
   #app-localnews .localnews-nav { margin-right: -32px; margin-left: -32px; padding-right: 32px; padding-left: 32px; }
 }
+
+
+/* Public citizen profile */
+#app-social .app-body:has(.shared-profile-shell) {
+  padding: 0;
+  background: #f4f6fa;
+}
+
+.shared-profile-shell {
+  gap: 14px;
+  padding: 0 14px 22px;
+  background: #f4f6fa;
+  overflow: visible;
+}
+
+.shared-profile-shell .profile-hero-panel {
+  margin: 0 -14px;
+  border: 0;
+  border-radius: 0 0 28px 28px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(23, 39, 67, 0.08);
+  overflow: visible;
+}
+
+.shared-profile-shell .profile-cover-public {
+  height: clamp(150px, 31vw, 205px);
+  background: linear-gradient(125deg, #142341 0%, #1c3e61 56%, #347275 100%);
+  overflow: hidden;
+}
+
+.shared-profile-shell .profile-cover-public::before {
+  background: radial-gradient(circle at 78% 8%, rgba(133, 218, 210, 0.28), transparent 38%);
+}
+
+.profile-cover-orbit {
+  position: absolute;
+  display: block;
+  width: 300px;
+  height: 300px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.profile-cover-orbit-one { right: -45px; top: -185px; }
+.profile-cover-orbit-two { right: -150px; top: -108px; width: 360px; height: 360px; }
+
+.profile-cover-topline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.profile-cover-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 0 13px 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-cover-back svg { width: 20px; height: 20px; }
+.profile-cover-back:hover, .profile-cover-back:focus-visible { background: rgba(255, 255, 255, 0.22); }
+.profile-cover-kicker { color: rgba(255, 255, 255, 0.78); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+
+.shared-profile-shell .profile-avatar-wrap { margin-top: -49px; padding: 0 22px; }
+.shared-profile-shell .profile-avatar-ring { width: 100px; height: 100px; margin: 0; padding: 4px; background: #fff; box-shadow: 0 8px 22px rgba(17, 36, 58, 0.15); }
+.shared-profile-shell .profile-avatar-photo { border: 0; }
+.shared-profile-shell .profile-main-header { padding: 10px 22px 0; }
+.shared-profile-shell .profile-name-row { flex-wrap: wrap; gap: 8px; }
+.shared-profile-shell .profile-name-row h2 { font-size: clamp(1.65rem, 5vw, 2.2rem); line-height: 1.15; letter-spacing: -0.035em; }
+.profile-following-pill { padding: 5px 9px; border-radius: 999px; background: #e3f3ee; color: #176b56; font-size: 0.65rem; font-weight: 800; }
+.profile-handle { margin-top: 3px; color: #527086; font-size: 0.86rem; font-weight: 600; overflow-wrap: anywhere; }
+.profile-meta-row { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; color: #526578; font-size: 0.76rem; }
+.profile-meta-row span + span::before { content: '•'; margin-right: 14px; color: #97a9b8; }
+.profile-stats { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 18px; padding: 14px 0; border-top: 1px solid #edf0f4; border-bottom: 1px solid #edf0f4; color: #657383; font-size: 0.8rem; }
+.profile-stats strong { margin-right: 3px; color: #17283d; font-size: 1rem; }
+.shared-profile-shell .profile-action-row { padding: 16px 22px 22px; }
+.shared-profile-shell .profile-action-row .secondary-button { min-height: 44px; border-radius: 12px; font-size: 0.82rem; }
+.shared-profile-shell .profile-action-row > .secondary-button { background: #193c5d; border-color: #193c5d; color: #fff; }
+.shared-profile-shell .profile-action-row .social-associate-toggle { background: #f0f4f8; border-color: #e3eaf0; }
+.shared-profile-shell .profile-action-row .social-associate-toggle[aria-expanded='true'] { background: #e4edf6; border-color: #90adca; color: #173b5c; box-shadow: none; }
+.shared-profile-shell .social-associate-wrap { position: relative; }
+.shared-profile-shell .social-associate-menu { position: absolute; z-index: 3; top: calc(100% + 6px); left: 0; right: 0; min-width: 165px; }
+.shared-profile-shell .social-associate-choice { font-size: 0.78rem; line-height: 1.3; }
+.shared-profile-shell .social-associate-choice.danger { font-size: 0.78rem; line-height: 1.3; }
+.shared-profile-shell .profile-hero-panel > .mylife-alert { margin: 0 22px 18px; }
+
+.shared-profile-shell > .profile-section { padding: 20px; border: 1px solid #e9edf2; border-radius: 20px; background: #fff; box-shadow: 0 5px 18px rgba(20, 39, 62, 0.035); }
+.shared-profile-shell .profile-section-header { margin-bottom: 16px; }
+.shared-profile-shell .profile-section-header h3 { font-size: 1.1rem; letter-spacing: -0.02em; }
+.shared-profile-shell .profile-detail-list { gap: 0; }
+.shared-profile-shell .profile-detail-item { gap: 12px; min-width: 0; padding: 12px 0; font-size: 0.85rem; }
+.shared-profile-shell .profile-detail-item:first-child { padding-top: 0; }
+.shared-profile-shell .profile-detail-item:last-child { padding-bottom: 0; }
+.shared-profile-shell .profile-detail-icon { width: 38px; height: 38px; border-radius: 11px; background: #eef4f8; color: #315b78; }
+.shared-profile-shell .profile-detail-icon svg { width: 19px; height: 19px; }
+.shared-profile-shell .profile-detail-copy { display: grid; gap: 2px; min-width: 0; }
+.shared-profile-shell .profile-detail-label { color: #798a99; font-size: 0.7rem; font-weight: 600; }
+.shared-profile-shell .profile-detail-copy strong { color: #1a2c3f; font-size: 0.85rem; font-weight: 700; }
+.shared-profile-shell .profile-feed { gap: 10px; margin-top: 0; }
+.shared-profile-shell .profile-post { gap: 10px; padding: 14px; border-color: #e9edf1; border-radius: 14px; background: #fbfcfe; box-shadow: none; }
+.shared-profile-shell .profile-post .social-post-copy { font-size: 0.83rem; line-height: 1.55; }
+.shared-profile-shell .profile-post .social-post-metrics { padding-top: 10px; border-top: 1px solid #e9edf1; font-size: 0.7rem; }
+.shared-profile-shell > .mylife-alert { margin-top: 14px; }
+
+@media (max-width: 420px) {
+  .shared-profile-shell { padding-right: 12px; padding-left: 12px; }
+  .shared-profile-shell .profile-hero-panel { margin-right: -12px; margin-left: -12px; }
+  .shared-profile-shell .profile-main-header { padding-right: 18px; padding-left: 18px; }
+  .shared-profile-shell .profile-avatar-wrap { padding-left: 18px; }
+  .shared-profile-shell .profile-action-row { padding-right: 18px; padding-left: 18px; }
+  .profile-meta-row span + span::before { margin-right: 8px; }
+}

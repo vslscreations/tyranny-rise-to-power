@@ -3063,17 +3063,13 @@ function renderSocialApp() {
       >${profileMessageBusy ? 'Opening…' : 'Message'}</button>
     ` : '';
 
-    const profileStatusText = profileView.data?.current_user_following ? 'Following' : 'Citizen';
-    const profileFriendBadge = '';
     const profileEmploymentStatus = String(
-      profileView.data?.profession || profileState.private?.profession || profileView.data?.employment_status || 'Unavailable'
+      profileView.data?.profession || profileView.data?.employment_status || 'Unavailable'
     ).trim() || 'Unavailable';
-    const profileSocialClass = String(
-      profileView.data?.social_class || profileState.private?.social_class || 'Unavailable'
-    ).trim() || 'Unavailable';
-    const profileEducation = String(
-      profileView.data?.education || profileState.private?.education || 'Unavailable'
-    ).trim() || 'Unavailable';
+    const profileSocialClass = String(profileView.data?.social_class || 'Unavailable').trim() || 'Unavailable';
+    const profileEducation = String(profileView.data?.education || 'Unavailable').trim() || 'Unavailable';
+    const followerCount = Math.max(0, Number(profileView.data?.follower_count || 0));
+    const followingCount = Math.max(0, Number(profileView.data?.following_count || 0));
     const profileDetailRows = [
       { key: 'employment_status', label: 'Employment status', value: getDisplayProfession(profileEmploymentStatus, 'Unavailable'), icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8.5V6.7A2.7 2.7 0 0 1 9.7 4h4.6A2.7 2.7 0 0 1 17 6.7v1.8M4.5 18.5h15a1 1 0 0 0 1-1V9.8a1 1 0 0 0-1-1h-15a1 1 0 0 0-1 1v7.7a1 1 0 0 0 1 1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
       { key: 'social_class', label: 'Social class', value: profileSocialClass, icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18.5V8.8m7 9.7V5.5m7 13V11.2M3.5 18.5h17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
@@ -3103,7 +3099,10 @@ function renderSocialApp() {
               ${profileDetailRows.map((detail) => `
                 <div class="profile-detail-item">
                   <span class="profile-detail-icon">${detail.icon}</span>
-                  <strong>${escapeHtml(detail.label)}: ${escapeHtml(detail.value)}</strong>
+                  <span class="profile-detail-copy">
+                    <span class="profile-detail-label">${escapeHtml(detail.label)}</span>
+                    <strong>${escapeHtml(detail.value)}</strong>
+                  </span>
                 </div>
               `).join('')}
             </div>
@@ -3171,8 +3170,14 @@ function renderSocialApp() {
       <div class="shared-profile-shell">
         <div class="profile-hero-panel">
           <div class="profile-cover profile-cover-public">
-            <div class="profile-cover-actions">
-              <button type="button" class="profile-mini-button" aria-label="More citizen actions">⋯</button>
+            <span class="profile-cover-orbit profile-cover-orbit-one" aria-hidden="true"></span>
+            <span class="profile-cover-orbit profile-cover-orbit-two" aria-hidden="true"></span>
+            <div class="profile-cover-topline">
+              <button type="button" class="profile-cover-back" data-social-action="close-profile-view" aria-label="Back to social feed">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Back
+              </button>
+              <span class="profile-cover-kicker">Citizen profile</span>
             </div>
           </div>
 
@@ -3183,23 +3188,24 @@ function renderSocialApp() {
           </div>
 
           <div class="profile-main-header">
-            <div class="profile-header-row">
-              <div class="profile-identity">
-                <div class="profile-name-row">
-                  <h2>${escapeHtml(profileDisplayName)}</h2>
-                  <span class="profile-verified-badge" title="${escapeHtml(profileStatusText)}">${profileView.data?.current_user_following ? '✓' : '◉'}</span>
-                </div>
-                <div class="profile-role">${escapeHtml(getDisplayProfession(profileView.data?.profession, 'Citizen'))}</div>
-              </div>
-              <button type="button" class="profile-close-button" data-social-action="close-profile-view">Back</button>
+            <div class="profile-name-row">
+              <h2>${escapeHtml(profileDisplayName)}</h2>
+              ${profileView.data?.current_user_following ? '<span class="profile-following-pill">Following</span>' : ''}
             </div>
-
-            ${profileFriendBadge}
+            <div class="profile-handle">${escapeHtml(profileDisplayHandle)}</div>
+            <div class="profile-meta-row">
+              <span>${escapeHtml(getDisplayProfession(profileView.data?.profession, 'Citizen'))}</span>
+              ${profileView.data?.registration_date ? `<span>Joined ${escapeHtml(registrationDate)}</span>` : ''}
+            </div>
+            ${!profileView.loading && !profileView.error ? `
+              <div class="profile-stats" aria-label="Social connections">
+                <span><strong>${followingCount.toLocaleString()}</strong> Following</span>
+                <span><strong>${followerCount.toLocaleString()}</strong> Followers</span>
+              </div>
+            ` : ''}
           </div>
 
-          <div class="profile-action-row">
-            ${profileHeaderActions}
-          </div>
+          ${profileHeaderActions ? `<div class="profile-action-row">${profileHeaderActions}</div>` : ''}
 
           ${relationshipNotice?.message ? `
             <div class="mylife-alert ${relationshipNotice.type === 'success' ? 'success' : ''}" role="status">
