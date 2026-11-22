@@ -93,7 +93,11 @@ function bindGlobalCitizenProfileActions() {
         return;
       }
 
-      await loadSocialProfileView(targetCitizenId);
+      const fromMoneytree = Boolean(profileOpenButton.closest('#app-moneytree'));
+      if (fromMoneytree) openApp('social');
+      const returnButton = fromMoneytree ? profileOpenButton
+        : profileOpenButton.closest('.profile-post') ? socialState.profileView?.moneytreeAuthorButton : null;
+      await loadSocialProfileView(targetCitizenId, returnButton);
       return;
     }
 
@@ -198,12 +202,6 @@ const appCatalog = {
     color: '#8ae5a5',
     unread: 2,
   },
-  moderator: {
-    name: 'Moderator',
-    icon: '⚖',
-    color: '#ffb86b',
-    unread: 0,
-  },
   mylife: {
     name: 'MyLife',
     icon: './images/icons/mylife.PNG',
@@ -246,6 +244,12 @@ const appCatalog = {
     color: '#6bcab7',
     unread: 1,
     locked: true,
+  },
+  moderator: {
+    name: 'Moderator',
+    icon: '⚖',
+    color: '#ffb86b',
+    unread: 0,
   },
 };
 
@@ -433,6 +437,14 @@ const storeState = {
   purchaseRequestProductId: null,
   purchaseRequestKey: null,
 };
+const assetMapState = {
+  catalogByKey: new Map(),
+  ownedProductKeys: new Set(),
+  loading: false,
+  loaded: false,
+  error: null,
+  selectedAssetKey: null,
+};
 const lucky7State = {
   selectedGame: 'slots',
   wager: 5,
@@ -510,18 +522,38 @@ const moderatorAppState = {
   error: null,
   message: null,
   processingIds: [],
+  rejectionDrafts: {},
   requestToken: 0,
   ownerAccess: false,
   ownerLoading: false,
   ownerMessage: null,
   ownerError: null,
   ownerTargetCitizenId: '',
+  ownerTargetCitizenName: '',
+  ownerSearchTerm: '',
+  ownerSearchResults: [],
+  ownerSearchError: null,
+  ownerSearchLoading: false,
+  ownerSearchComplete: false,
+  ownerSearchRequestToken: 0,
+  citizenDirectory: { query: '', offset: 0, rows: [], hasMore: false, loading: false, error: null, selectedId: null, requestToken: 0 },
   ownerAmount: '',
   ownerReason: '',
   ownerSubmitting: false,
   ownerHistory: [],
   currentSubpage: 'queue',
 };
+
+function clearOwnerCitizenLookup() {
+  moderatorAppState.ownerSearchRequestToken++;
+  moderatorAppState.ownerSearchTerm = '';
+  moderatorAppState.ownerSearchResults = [];
+  moderatorAppState.ownerSearchError = null;
+  moderatorAppState.ownerSearchLoading = false;
+  moderatorAppState.ownerSearchComplete = false;
+  moderatorAppState.ownerTargetCitizenId = '';
+  moderatorAppState.ownerTargetCitizenName = '';
+}
 
 const moderatorPollState = {
   loading: false,
@@ -1826,6 +1858,7 @@ function openSocialProfileView(targetCitizenId) {
 }
 
 function closeSocialProfileView() {
+  const returnButton = socialState.profileView?.moneytreeAuthorButton;
   resetProfileRelationshipPickerState();
 
   const nextRequestToken = Number(socialState.profileView?.requestToken || 0) + 1;
@@ -1841,9 +1874,13 @@ function closeSocialProfileView() {
   };
 
   renderSocialApp();
+  if (returnButton) {
+    openApp('moneytree');
+    returnButton.focus({ preventScroll: true });
+  }
 }
 
-async function loadSocialProfileView(targetCitizenId) {
+async function loadSocialProfileView(targetCitizenId, moneytreeAuthorButton = null) {
   if (authState.initializing || !authState.ready) {
     return;
   }
@@ -1865,6 +1902,7 @@ async function loadSocialProfileView(targetCitizenId) {
     loading: true,
     error: null,
     requestToken,
+    moneytreeAuthorButton,
     relationshipPickerTargetId: null,
     relationshipPickerOpen: false,
   };
@@ -1925,6 +1963,7 @@ async function loadSocialProfileView(targetCitizenId) {
       : [];
 
     const relationshipStatus = await loadProfileRelationshipStatus(normalizedCitizenId);
+    if (requestToken !== socialState.profileView?.requestToken) return;
 
     socialState.profileView = {
       ...socialState.profileView,
@@ -3068,8 +3107,6 @@ function renderSocialApp() {
     ).trim() || 'Unavailable';
     const profileSocialClass = String(profileView.data?.social_class || 'Unavailable').trim() || 'Unavailable';
     const profileEducation = String(profileView.data?.education || 'Unavailable').trim() || 'Unavailable';
-    const followerCount = Math.max(0, Number(profileView.data?.follower_count || 0));
-    const followingCount = Math.max(0, Number(profileView.data?.following_count || 0));
     const profileDetailRows = [
       { key: 'employment_status', label: 'Employment status', value: getDisplayProfession(profileEmploymentStatus, 'Unavailable'), icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8.5V6.7A2.7 2.7 0 0 1 9.7 4h4.6A2.7 2.7 0 0 1 17 6.7v1.8M4.5 18.5h15a1 1 0 0 0 1-1V9.8a1 1 0 0 0-1-1h-15a1 1 0 0 0-1 1v7.7a1 1 0 0 0 1 1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
       { key: 'social_class', label: 'Social class', value: profileSocialClass, icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18.5V8.8m7 9.7V5.5m7 13V11.2M3.5 18.5h17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
@@ -3115,38 +3152,28 @@ function renderSocialApp() {
               </div>
               <div class="social-feed profile-feed">
                 ${profilePosts.map((post) => {
-                  const author = post?.author || {};
-                  const authorHandle = formatSocialHandle(post?.author_handle || author.handle || '@citizen', '@citizen');
-                  const authorCitizenId = String(post?.author_citizen_id ?? author?.citizen_id ?? author?.id ?? '');
-                  const authorAvatar = getSafeAvatarUrl(author.avatar_url || './assets/avatars/aurelia-voss.svg');
-                  const postId = String(post?.id ?? '');
-                  const content = String(post?.content ?? '');
-                  const createdAt = post?.created_at ? formatSocialTimestamp(post.created_at) : 'Recent';
-                  const likeCount = Number(post?.like_count ?? 0) || 0;
-                  const commentCount = Number(post?.comment_count ?? 0) || 0;
-
                   return `
-                    <article class="social-post profile-post" data-post-id="${escapeHtml(postId)}">
+                    <article class="social-post profile-post" data-post-id="${escapeHtml(post.id)}">
                       <div class="social-post-header">
                         <button
                           type="button"
                           class="social-post-author social-author-button"
                           data-social-action="open-citizen-profile"
-                          data-citizen-id="${escapeHtml(authorCitizenId)}"
-                          aria-label="Open ${escapeHtml(authorHandle)}'s profile"
+                          data-citizen-id="${escapeHtml(post.authorCitizenId || profileTargetCitizenId)}"
+                          aria-label="Open ${escapeHtml(post.author)}'s profile"
                           style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
                         >
-                          <div class="social-post-avatar" style="background-image: url('${escapeHtml(authorAvatar)}')"></div>
+                          <div class="social-post-avatar" style="background-image: url('${escapeHtml(post.avatar)}')"></div>
                           <div>
-                            <strong>${escapeHtml(authorHandle)}</strong>
-                            <span>${escapeHtml(createdAt)}</span>
+                            <strong>${escapeHtml(post.author)}</strong>
+                            <span>${escapeHtml(post.handle)} · <time datetime="${escapeHtml(post.createdAt)}">${escapeHtml(formatSocialTimestamp(post.createdAt))}</time></span>
                           </div>
                         </button>
                       </div>
-                      <p class="social-post-copy">${escapeHtml(content)}</p>
+                      <p class="social-post-copy">${escapeHtml(post.content)}</p>
                       <div class="social-post-metrics">
-                        <span>${likeCount} likes</span>
-                        <span>${commentCount} comments</span>
+                        <span>${post.likes} ${post.likes === 1 ? 'like' : 'likes'}</span>
+                        <span>${post.comments} ${post.comments === 1 ? 'comment' : 'comments'}</span>
                       </div>
                     </article>
                   `;
@@ -3173,7 +3200,7 @@ function renderSocialApp() {
             <span class="profile-cover-orbit profile-cover-orbit-one" aria-hidden="true"></span>
             <span class="profile-cover-orbit profile-cover-orbit-two" aria-hidden="true"></span>
             <div class="profile-cover-topline">
-              <button type="button" class="profile-cover-back" data-social-action="close-profile-view" aria-label="Back to social feed">
+              <button type="button" class="profile-cover-back" data-social-action="close-profile-view" aria-label="${profileView.moneytreeAuthorButton ? 'Back to MoneyTree discussion' : 'Back to social feed'}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 Back
               </button>
@@ -3197,12 +3224,6 @@ function renderSocialApp() {
               <span>${escapeHtml(getDisplayProfession(profileView.data?.profession, 'Citizen'))}</span>
               ${profileView.data?.registration_date ? `<span>Joined ${escapeHtml(registrationDate)}</span>` : ''}
             </div>
-            ${!profileView.loading && !profileView.error ? `
-              <div class="profile-stats" aria-label="Social connections">
-                <span><strong>${followingCount.toLocaleString()}</strong> Following</span>
-                <span><strong>${followerCount.toLocaleString()}</strong> Followers</span>
-              </div>
-            ` : ''}
           </div>
 
           ${profileHeaderActions ? `<div class="profile-action-row">${profileHeaderActions}</div>` : ''}
@@ -5229,6 +5250,352 @@ async function handleProfileEditSubmit(event) {
   renderAppContent('mylife');
 }
 
+const FRONTEND_PRODUCT_CONFIG = Object.freeze({
+  basic_home: {
+    productKey: 'basic_home',
+    name: 'Basic Home',
+    description: 'Your first house. It ensures you and your family have a place to sleep. A necessary responsibility for a man of power.',
+    image: './assets/asset-map/house-background.png',
+    layer: 'house',
+    backendProductKey: 'basic_home',
+  },
+  basic_vehicle: {
+    productKey: 'basic_vehicle',
+    name: 'Basic Vehicle',
+    description: 'Your first vehicle. It ensures that you have reliable transportation. It\'s necessary to complete certain tasks and to participate in delivery jobs.',
+    image: './assets/asset-map/basic-vehicle.png',
+    layer: 'vehicle',
+    backendProductKey: 'basic_vehicle',
+  },
+  laptop: {
+    productKey: 'laptop',
+    name: 'Laptop',
+    description: 'Your first real purchase. Necessary to find your first job and start making more money!!',
+    image: './assets/asset-map/laptop.png',
+    layer: 'laptop',
+    backendProductKey: 'laptop',
+    storeDisplayName: 'Criminal Handbook',
+    storeDisplayDescription: 'Gives the average citizen tips on how to become a criminal. Buy at your own risk!!! You might just end up in jail.',
+    storeDisplayImage: './assets/asset-map/criminal-handbook.png',
+  },
+  high_school_diploma: {
+    productKey: 'high_school_diploma',
+    name: 'High School Diploma',
+    description: 'Earn your verified high school diploma. It’s necessary to move forward in any career. It’s the minimum expectation of every Tyranny citizen!',
+    image: './assets/asset-map/high-school-diploma.png',
+    layer: 'diploma',
+    backendProductKey: 'high_school_diploma',
+  },
+  criminal_handbook: {
+    productKey: 'criminal_handbook',
+    name: 'Criminal Handbook',
+    description: 'Gives the average citizen tips on how to become a criminal. Buy at your own risk!!! You might just end up in jail.',
+    image: './assets/asset-map/criminal-handbook.png',
+    layer: 'handbook',
+    backendProductKey: 'laptop',
+  },
+});
+
+const ASSET_MAP_ITEMS = [
+  {
+    ...FRONTEND_PRODUCT_CONFIG.basic_home,
+  },
+  {
+    ...FRONTEND_PRODUCT_CONFIG.basic_vehicle,
+  },
+  {
+    ...FRONTEND_PRODUCT_CONFIG.laptop,
+  },
+  {
+    ...FRONTEND_PRODUCT_CONFIG.high_school_diploma,
+  },
+  {
+    ...FRONTEND_PRODUCT_CONFIG.criminal_handbook,
+  },
+];
+
+function getAssetMapItem(productKey) {
+  return ASSET_MAP_ITEMS.find((item) => item.productKey === productKey) || null;
+}
+
+function getAssetMapStoreProductKey(productKey) {
+  if (productKey === 'criminal_handbook') {
+    return 'laptop';
+  }
+  if (productKey === 'laptop') {
+    return 'laptop';
+  }
+  return productKey;
+}
+
+function getStoreProductDisplayMeta(product) {
+  const productKey = product?.product_key || null;
+  const config = FRONTEND_PRODUCT_CONFIG[productKey] || null;
+
+  if (productKey === 'laptop') {
+    return {
+      name: FRONTEND_PRODUCT_CONFIG.laptop.storeDisplayName,
+      description: FRONTEND_PRODUCT_CONFIG.laptop.storeDisplayDescription,
+      image: FRONTEND_PRODUCT_CONFIG.laptop.storeDisplayImage,
+      backendProductKey: 'laptop',
+    };
+  }
+
+  if (config) {
+    return {
+      name: config.name,
+      description: config.description,
+      image: config.image,
+      backendProductKey: config.backendProductKey || productKey,
+    };
+  }
+
+  return {
+    name: product?.product_name || 'Store item',
+    description: product?.description || 'No description available.',
+    image: null,
+    backendProductKey: productKey,
+  };
+}
+
+function isAssetMapItemOwned(productKey) {
+  return assetMapState.ownedProductKeys.has(productKey);
+}
+
+function getAssetMapAvailability(product) {
+  if (!product) {
+    return { label: 'Not yet in Store', canVisitStore: true, tone: 'pending' };
+  }
+
+  if (!product.is_visible) {
+    return { label: 'Unavailable', canVisitStore: false, tone: 'pending' };
+  }
+
+  if (product.is_purchasable && !product.is_locked && product.price !== null && product.price !== undefined) {
+    return { label: 'Available in Store', canVisitStore: true, tone: 'available' };
+  }
+
+  if (product.price === null || product.price === undefined) {
+    return { label: 'Price TBD', canVisitStore: true, tone: 'pending' };
+  }
+
+  if (product.is_locked) {
+    return { label: 'Coming soon', canVisitStore: true, tone: 'pending' };
+  }
+
+  return { label: 'Unavailable', canVisitStore: true, tone: 'pending' };
+}
+
+function getAssetMapStatus(item) {
+  if (isAssetMapItemOwned(item.productKey)) {
+    return { label: 'Owned', tone: 'owned', canVisitStore: false };
+  }
+  const mappedProductKey = getAssetMapStoreProductKey(item.productKey);
+  return getAssetMapAvailability(assetMapState.catalogByKey.get(mappedProductKey) || assetMapState.catalogByKey.get(item.productKey) || null);
+}
+
+function renderAssetMapPageMarkup() {
+  const selectedItem = getAssetMapItem(assetMapState.selectedAssetKey) || null;
+  const selectedProductKey = selectedItem ? getAssetMapStoreProductKey(selectedItem.productKey) : null;
+  const selectedProduct = selectedItem ? assetMapState.catalogByKey.get(selectedProductKey) || assetMapState.catalogByKey.get(selectedItem.productKey) || null : null;
+  const selectedStatus = selectedItem ? getAssetMapStatus(selectedItem) : null;
+  const imageByLayer = {
+    vehicle: './assets/asset-map/basic-vehicle.png',
+    laptop: './assets/asset-map/laptop.png',
+    diploma: './assets/asset-map/high-school-diploma.png',
+    handbook: './assets/asset-map/criminal-handbook.png',
+  };
+
+  const sceneLayers = ASSET_MAP_ITEMS.map((item) => {
+    const owned = isAssetMapItemOwned(item.productKey);
+    const status = getAssetMapStatus(item);
+
+    if (item.layer === 'house') {
+      return `
+        <button type="button" class="asset-map-hotspot asset-map-hotspot--house ${owned ? 'is-owned' : 'is-unowned'}" data-asset-map-key="${item.productKey}" aria-label="${escapeHtml(item.name)}, ${escapeHtml(status.label)}">
+          <img class="asset-map-layer asset-map-layer--house" src="./assets/asset-map/house-background.png" alt="" />
+        </button>
+      `;
+    }
+
+    return `
+      <button type="button" class="asset-map-hotspot asset-map-hotspot--${item.layer} ${owned ? 'is-owned' : 'is-unowned'}" data-asset-map-key="${item.productKey}" aria-label="${escapeHtml(item.name)}, ${escapeHtml(status.label)}">
+        <img class="asset-map-layer asset-map-layer--${item.layer}" src="${imageByLayer[item.layer]}" alt="" />
+      </button>
+    `;
+  }).join('');
+
+  const detailPanel = selectedItem ? `
+    <section class="asset-map-detail" aria-live="polite">
+      <div>
+        <span class="asset-map-detail-eyebrow">${isAssetMapItemOwned(selectedItem.productKey) ? 'Your asset' : 'Asset details'}</span>
+        <h3>${escapeHtml(selectedItem.name)}</h3>
+        <p>${escapeHtml(selectedProduct?.description || selectedItem.description)}</p>
+      </div>
+      <div class="asset-map-detail-footer">
+        <span class="asset-map-status ${selectedStatus.tone}">${escapeHtml(selectedStatus.label)}</span>
+        ${!isAssetMapItemOwned(selectedItem.productKey) && selectedStatus.canVisitStore ? `<button type="button" class="asset-map-store-button" data-asset-map-store="${selectedItem.productKey}">View in Store</button>` : ''}
+      </div>
+    </section>
+  ` : `
+    <section class="asset-map-detail asset-map-detail--hint" aria-live="polite">
+      <p>Tap an item in the scene to view its ownership and Store status.</p>
+    </section>
+  `;
+
+  return `
+    <main class="asset-map-page">
+      <header class="asset-map-header">
+        <button type="button" class="asset-map-back" data-asset-map-home aria-label="Back to home">‹</button>
+        <div>
+          <span>Citizen inventory</span>
+          <h2>Asset Map</h2>
+        </div>
+        <button type="button" class="asset-map-refresh" data-asset-map-refresh aria-label="Refresh Asset Map">↻</button>
+      </header>
+      <p class="asset-map-intro">Your assets brighten as you acquire them. There is no purchase path here—each item follows its own Store availability.</p>
+      ${assetMapState.error ? `<div class="asset-map-message"><strong>Map data unavailable</strong><p>${escapeHtml(assetMapState.error)}</p></div>` : ''}
+      <section class="asset-map-scene ${assetMapState.loading ? 'is-loading' : ''}" aria-label="Interactive Asset Map">
+        ${sceneLayers}
+        <div class="asset-map-table" aria-hidden="true"></div>
+        ${assetMapState.loading ? '<div class="asset-map-loading">Loading your inventory…</div>' : ''}
+      </section>
+      ${detailPanel}
+    </main>
+  `;
+}
+
+function renderMylifeAssetMap() {
+  const body = document.querySelector('#app-mylife .app-body');
+  if (!body) {
+    return;
+  }
+
+  if (!assetMapState.loaded) {
+    void loadAssetMapData();
+  }
+
+  body.innerHTML = renderAssetMapPageMarkup();
+  bindAssetMapControls(body);
+}
+
+function bindAssetMapControls(root = document) {
+  root.querySelectorAll('[data-asset-map-key]').forEach((button) => {
+    button.addEventListener('click', () => {
+      assetMapState.selectedAssetKey = button.dataset.assetMapKey || null;
+      const insideMylife = !!root.closest('#app-mylife');
+      if (insideMylife) {
+        renderMylifeAssetMap();
+        return;
+      }
+      renderAssetMapApp();
+    });
+  });
+
+  const homeButton = root.querySelector('[data-asset-map-home]');
+  homeButton?.addEventListener('click', () => {
+    if (root.closest('#app-mylife')) {
+      renderAppContent('mylife');
+      return;
+    }
+    returnHome();
+  });
+
+  root.querySelector('[data-asset-map-refresh]')?.addEventListener('click', () => {
+    assetMapState.loaded = false;
+    void loadAssetMapData();
+  });
+
+  root.querySelector('[data-asset-map-store]')?.addEventListener('click', () => {
+    const productKey = root.querySelector('[data-asset-map-store]')?.dataset.assetMapStore;
+    openAssetMapStore(productKey);
+  });
+}
+
+function renderAssetMapApp() {
+  const body = document.querySelector('#app-assetmap .app-body');
+  if (!body) {
+    return;
+  }
+
+  body.innerHTML = renderAssetMapPageMarkup();
+  bindAssetMapControls(body);
+}
+
+function openAssetMapStore(productKey) {
+  const resolvedKey = getAssetMapStoreProductKey(productKey);
+  const product = assetMapState.catalogByKey.get(resolvedKey) || assetMapState.catalogByKey.get(productKey);
+  openApp('store');
+  if (product?.id) {
+    storeState.selectedProductId = product.id;
+    storeState.quote = null;
+  } else {
+    storeState.selectedProductId = null;
+    storeState.quote = null;
+  }
+  if (!storeState.hasLoaded) {
+    void loadStoreCatalog();
+  } else {
+    renderStoreApp();
+  }
+}
+
+async function loadAssetMapData() {
+  const supabase = getAuthClient();
+  const session = (await supabase?.auth.getSession())?.data?.session;
+  assetMapState.loading = true;
+  assetMapState.error = null;
+  renderAssetMapApp();
+
+  if (!supabase || !session?.user) {
+    assetMapState.loading = false;
+    assetMapState.loaded = true;
+    assetMapState.catalogByKey = new Map();
+    assetMapState.ownedProductKeys = new Set();
+    assetMapState.error = 'Please sign in to view your owned assets.';
+    renderAssetMapApp();
+    return;
+  }
+
+  try {
+    const [{ data: catalog, error: catalogError }, { data: inventory, error: inventoryError }] = await Promise.all([
+      supabase
+        .from('store_catalog')
+        .select('id, product_key, product_name, description, price, is_visible, is_purchasable, is_locked, one_time_purchase, requirements')
+        .in('product_key', ASSET_MAP_ITEMS.map((item) => item.productKey)),
+      supabase
+        .from('citizen_inventory')
+        .select('item_id, is_active'),
+    ]);
+
+    if (catalogError) {
+      throw catalogError;
+    }
+    if (inventoryError) {
+      throw inventoryError;
+    }
+
+    const catalogById = new Map((catalog || []).map((product) => [product.id, product]));
+    assetMapState.catalogByKey = new Map((catalog || []).map((product) => [product.product_key, product]));
+    assetMapState.ownedProductKeys = new Set(
+      (inventory || [])
+        .filter((entry) => entry.is_active)
+        .map((entry) => catalogById.get(entry.item_id)?.product_key)
+        .filter(Boolean),
+    );
+    assetMapState.loaded = true;
+  } catch (error) {
+    console.error('Asset Map load failed:', error);
+    assetMapState.catalogByKey = new Map();
+    assetMapState.ownedProductKeys = new Set();
+    assetMapState.error = error?.message || 'Unable to load your inventory right now.';
+    assetMapState.loaded = true;
+  } finally {
+    assetMapState.loading = false;
+    renderAssetMapApp();
+  }
+}
+
 function getStoreProductStatus(product) {
   if (!product || !product.is_visible) {
     return { label: 'Unavailable', tone: 'locked' };
@@ -5423,7 +5790,8 @@ function renderStoreDetailModal(product) {
   const eligibility = getStoreEligibilityStatus(product, quote);
   const checkoutDisabledReason = getStoreCheckoutDisabledReason(product, quote);
   const isConfirmationReady = storeState.confirmationProductId === product.id && !storeState.isCheckoutBusy;
-  const quotePriceText = quote && quote.item_price != null ? formatCurrency(Number(quote.item_price)) : product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price not set';
+  const displayMeta = getStoreProductDisplayMeta(product);
+  const quotePriceText = quote && quote.item_price != null ? formatCurrency(Number(quote.item_price)) : product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price TBD';
   const quoteTaxRateText = quote && quote.tax_rate != null ? `${Number(quote.tax_rate * 100).toFixed(2)}%` : '—';
   const quoteTaxAmountText = quote && quote.tax_amount != null ? formatCurrency(Number(quote.tax_amount)) : '—';
   const quoteFinalTotalText = quote && quote.final_total != null ? formatCurrency(Number(quote.final_total)) : '—';
@@ -5443,12 +5811,12 @@ function renderStoreDetailModal(product) {
     <div class="store-modal-backdrop" data-store-modal-backdrop="true">
       <div class="store-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(product.product_name)} details">
         <button type="button" class="store-modal-close" data-store-modal-close aria-label="Close product details">×</button>
-        <div class="store-modal-art" aria-hidden="true">${escapeHtml((product.product_name || 'ST').slice(0, 2).toUpperCase())}</div>
+          <div class="store-modal-art" aria-hidden="true">${displayMeta.image ? `<img src="${displayMeta.image}" alt="${escapeHtml(displayMeta.name)}" />` : escapeHtml((displayMeta.name || 'ST').slice(0, 2).toUpperCase())}</div>
         <div class="store-modal-header">
           <span class="store-product-pill ${productStatus.tone}">${escapeHtml(productStatus.label)}</span>
-          <h4>${escapeHtml(product.product_name)}</h4>
+          <h4>${escapeHtml(displayMeta.name)}</h4>
         </div>
-        <p class="store-modal-copy">${escapeHtml(product.description || 'No description available.')}</p>
+        <p class="store-modal-copy">${escapeHtml(displayMeta.description || 'No description available.')}</p>
         <div class="store-detail-list">
           <div><span>Category</span><strong>${escapeHtml(categoryName)}</strong></div>
           <div><span>Item price</span><strong>${escapeHtml(quotePriceText)}</strong></div>
@@ -5481,15 +5849,21 @@ function renderStoreApp() {
   const categoryMap = new Map(storeState.categories.map((category) => [category.id, category]));
   const searchQuery = String(storeState.searchTerm || '').trim().toLowerCase();
   const filteredCatalog = storeState.catalog
-    .filter((product) => categoryMap.has(product.category_id))
-    .filter((product) => storeState.selectedCategory === 'all' || categoryMap.get(product.category_id)?.category_key === storeState.selectedCategory)
-    .filter((product) => {
+    .map((product) => ({
+      product,
+      displayMeta: getStoreProductDisplayMeta(product),
+    }))
+    .filter(({ product }) => categoryMap.has(product.category_id))
+    .filter(({ product }) => storeState.selectedCategory === 'all' || categoryMap.get(product.category_id)?.category_key === storeState.selectedCategory)
+    .filter(({ displayMeta }) => {
       if (!searchQuery) {
         return true;
       }
-      return `${product.product_name || ''} ${product.description || ''}`.toLowerCase().includes(searchQuery);
+      return `${displayMeta.name || ''} ${displayMeta.description || ''}`.toLowerCase().includes(searchQuery);
     })
-    .sort((first, second) => {
+    .sort((firstEntry, secondEntry) => {
+      const first = firstEntry.product;
+      const second = secondEntry.product;
       const firstRank = STORE_PRIORITY_PRODUCT_KEYS.has(first.product_key)
         ? STORE_PRIORITY_PRODUCT_KEYS.get(first.product_key)
         : Number.MAX_SAFE_INTEGER;
@@ -5501,7 +5875,7 @@ function renderStoreApp() {
         return firstRank - secondRank;
       }
 
-      return (first.product_name || '').localeCompare(second.product_name || '', undefined, { sensitivity: 'base' });
+      return (firstEntry.displayMeta.name || '').localeCompare(secondEntry.displayMeta.name || '', undefined, { sensitivity: 'base' });
     });
 
   const categoryButtons = storeState.categories
@@ -5525,26 +5899,26 @@ function renderStoreApp() {
     .join('');
 
   const productCards = filteredCatalog
-    .map((product) => {
+    .map(({ product, displayMeta }) => {
       const category = categoryMap.get(product.category_id);
       const status = getStoreProductStatus(product);
       const requirementText = getStoreRequirementLabel(product);
-      const priceText = product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price not set';
-      const artLabel = (product.product_name || 'ST').split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('').slice(0, 2) || 'ST';
+      const priceText = product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price TBD';
+      const artImage = displayMeta.image ? `<img src="${displayMeta.image}" alt="${escapeHtml(displayMeta.name)}" />` : `<span>${escapeHtml((displayMeta.name || 'ST').split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('').slice(0, 2) || 'ST')}</span>`;
 
       return `
         <article class="store-product" data-store-product-id="${escapeHtml(product.id)}">
-          <div class="store-product-art" aria-hidden="true">${escapeHtml(artLabel)}</div>
+          <div class="store-product-art" aria-hidden="true">${artImage}</div>
           <div class="store-product-body">
             <div class="store-product-meta">
               <span class="store-product-category">${escapeHtml(category?.display_name || 'Store')}</span>
               <span class="store-product-pill ${status.tone}">${escapeHtml(status.label)}</span>
             </div>
-            <h4>${escapeHtml(product.product_name)}</h4>
+            <h4>${escapeHtml(displayMeta.name)}</h4>
             <div class="store-product-rating" aria-label="5 out of 5 fictional game rating">
               <span>5.0</span><b aria-hidden="true">★★★★★</b><small>Game rating</small>
             </div>
-            <p>${escapeHtml(product.description || 'No description available.')}</p>
+            <p>${escapeHtml(displayMeta.description || 'No description available.')}</p>
             <div class="store-product-row">
               <strong>${escapeHtml(priceText)}</strong>
               ${requirementText ? `<small>${escapeHtml(requirementText)}</small>` : ''}
@@ -5956,6 +6330,9 @@ async function handleStorePurchase(productId) {
     storeState.confirmationProductId = null;
     storeState.selectedProductId = null;
     clearStorePurchaseAttempt(productId);
+    // The next Asset Map visit must reflect the authoritative inventory row
+    // created by the purchase RPC, rather than retaining a stale local view.
+    assetMapState.loaded = false;
     await loadCitizenProfile();
     await loadStorePurchaseHistory();
     await loadStoreCatalog();
@@ -7362,7 +7739,7 @@ function renderCareerPathTreeMarkup(privateRecord = {}, inventoryItems = []) {
               : '';
 
     const isUnknown = entry.status === 'unknown';
-    const labelLines = entry.label.includes(' ') && entry.label.split(' ').length > 2
+    const labelLines = entry.label.includes(' ') && (entry.label.split(' ').length > 2 || entry.label.length > 15)
       ? entry.label.split(' ')
       : [entry.label];
     const multilineText = labelLines.length > 1
@@ -7407,9 +7784,11 @@ function renderCareerPathTreeMarkup(privateRecord = {}, inventoryItems = []) {
 
     return `
       <g class="career-node ${branchClass} status-${entry.status}" transform="translate(${entry.x} ${entry.y})">
+        <title>${escapeHtml(entry.label)} — ${escapeHtml(entry.status)}</title>
         <circle class="career-node-aura" r="${entry.radius + 18}" />
         <path class="career-node-ring" d="M 0 -${entry.radius + 8} L ${entry.radius + 8} 0 L 0 ${entry.radius + 8} L -${entry.radius + 8} 0 Z" />
         <path class="career-node-body" d="M 0 -${entry.radius} L ${entry.radius * 0.72} -${entry.radius * 0.72} L ${entry.radius} 0 L ${entry.radius * 0.72} ${entry.radius * 0.72} L 0 ${entry.radius} L -${entry.radius * 0.72} ${entry.radius * 0.72} L -${entry.radius} 0 L -${entry.radius * 0.72} -${entry.radius * 0.72} Z" />
+        <circle class="career-node-inset" r="${entry.radius * 0.78}" />
         <path class="career-node-notch" d="M -${entry.radius - 5} 0 H -${entry.radius + 2} M ${entry.radius - 5} 0 H ${entry.radius + 2}" />
         ${qMarkMarkup}
         ${iconMarkup}
@@ -7434,14 +7813,18 @@ function renderCareerPathTreeMarkup(privateRecord = {}, inventoryItems = []) {
                       <feMergeNode in="SourceGraphic"></feMergeNode>
                     </feMerge>
                   </filter>
+                  <pattern id="careerGrid" width="32" height="32" patternUnits="userSpaceOnUse">
+                    <path d="M 32 0 H 0 V 32" fill="none" stroke="#8cb3c9" stroke-opacity=".07" stroke-width=".6" />
+                  </pattern>
+                  <linearGradient id="careerPanel" x1="0" y1="0" x2="1" y2="1">
+                    <stop stop-color="#162936" />
+                    <stop offset=".52" stop-color="#0a141e" />
+                    <stop offset="1" stop-color="#080e15" />
+                  </linearGradient>
                 </defs>
                 <rect x="0" y="0" width="${layout.width}" height="${layout.height}" class="career-path-background" rx="28" />
-                <g class="career-tree-asset-layer" aria-hidden="true">
-                  <image href="assets/skill%20tree%20asset%20pack.0/svg/components/03_circuit_connector_lattice.svg" x="${layout.width * 0.12}" y="${layout.height * 0.10}" width="${layout.width * 0.76}" height="${layout.height * 0.38}" preserveAspectRatio="xMidYMid slice" />
-                  <image class="career-tree-badge-decal" href="assets/skill%20tree%20asset%20pack.0/svg/components/01_branch_header_badges.svg" x="${layout.width * 0.05}" y="24" width="${layout.width * 0.26}" height="48" preserveAspectRatio="xMidYMin slice" />
-                  <image class="career-tree-badge-decal" href="assets/skill%20tree%20asset%20pack.0/svg/components/01_branch_header_badges.svg" x="${layout.width * 0.37}" y="24" width="${layout.width * 0.26}" height="48" preserveAspectRatio="xMidYMin slice" />
-                  <image class="career-tree-badge-decal" href="assets/skill%20tree%20asset%20pack.0/svg/components/01_branch_header_badges.svg" x="${layout.width * 0.69}" y="24" width="${layout.width * 0.26}" height="48" preserveAspectRatio="xMidYMin slice" />
-                </g>
+                <rect x="1" y="1" width="${layout.width - 2}" height="${layout.height - 2}" rx="27" fill="url(#careerGrid)" aria-hidden="true" />
+                <rect x="12" y="12" width="${layout.width - 24}" height="${layout.height - 24}" rx="19" class="career-panel-inset" aria-hidden="true" />
                 ${connectorMarkup}
                 ${headingsMarkup}
                 ${nodeMarkup}
@@ -7527,7 +7910,7 @@ function renderAppContent(appId, mode = 'normal') {
           <form id="profileEditForm" class="profile-edit-form">
             <div class="field-group">
               <span>Public display name</span>
-              <div class="read-only-field">${displayName}</div>
+              <div class="read-only-field">${escapeHtml(displayName)}</div>
             </div>
 
             <label class="field-group">
@@ -7597,19 +7980,19 @@ function renderAppContent(appId, mode = 'normal') {
             <div class="profile-header-row">
               <div class="profile-identity">
                 <div class="profile-name-row">
-                  <h2>${displayName}</h2>
-                  <span class="profile-verified-badge" title="My profile">✓</span>
+                  <h2>${escapeHtml(displayName)}</h2>
                 </div>
                 <div class="profile-role">${escapeHtml(citizenHandle)}</div>
               </div>
-              <button type="button" class="profile-close-button" data-action="mylife-back">Back</button>
+              <button type="button" class="profile-close-button" data-action="mylife-back" aria-label="Back to home">Done</button>
             </div>
 
           </div>
 
         </div>
 
-        <section class="profile-section">
+        <section class="profile-section mylife-shortcuts-section" aria-label="Explore MyLife">
+          <div class="profile-section-header"><h3>Explore</h3></div>
           <div class="mylife-category-grid">
             ${categoryCards
               .map(
@@ -7628,14 +8011,15 @@ function renderAppContent(appId, mode = 'normal') {
           </div>
         </section>
 
-        <section class="profile-section">
+        <section class="profile-section mylife-details-section">
+          <div class="profile-section-header"><h3>Personal details</h3></div>
           <div class="profile-detail-list">
-            <div class="profile-detail-item"><span>Account balance</span><strong>${balanceValue}</strong></div>
-            <div class="profile-detail-item"><span>Employment status</span><strong>${profession}</strong></div>
-            <div class="profile-detail-item"><span>Social class</span><strong>${socialClass}</strong></div>
-            <div class="profile-detail-item"><span>Education</span><strong>${education}</strong></div>
-            <div class="profile-detail-item"><span>Account status</span><strong>${accountStatus}</strong></div>
-            <div class="profile-detail-item"><span>Registered</span><strong>${createdAt}</strong></div>
+            <div class="profile-detail-item"><span>Account balance</span><strong>${escapeHtml(balanceValue)}</strong></div>
+            <div class="profile-detail-item"><span>Employment status</span><strong>${escapeHtml(profession)}</strong></div>
+            <div class="profile-detail-item"><span>Social class</span><strong>${escapeHtml(socialClass)}</strong></div>
+            <div class="profile-detail-item"><span>Education</span><strong>${escapeHtml(education)}</strong></div>
+            <div class="profile-detail-item"><span>Account status</span><strong>${escapeHtml(accountStatus)}</strong></div>
+            <div class="profile-detail-item"><span>Registered</span><strong>${escapeHtml(createdAt)}</strong></div>
           </div>
         </section>
       </div>
@@ -7652,7 +8036,7 @@ function renderAppContent(appId, mode = 'normal') {
     const mylifeBackButton = body.querySelector('[data-action="mylife-back"]');
     if (mylifeBackButton) {
       mylifeBackButton.addEventListener('click', () => {
-        renderAppContent('mylife');
+        returnHome();
       });
     }
 
@@ -7674,10 +8058,15 @@ function renderAppContent(appId, mode = 'normal') {
 
         const categoryConfig = {
           skills: { title: 'Career Path Tree', icon: '✦', accent: '#eb8a4f', summary: 'Career path tree', description: 'Current progression and unlock pathway.', empty: 'No career path data is available yet.', isTree: true },
-          assets: { title: 'Assets', icon: '▣', accent: '#9a6ef8', summary: 'Personal assets', description: 'No personal asset system is active yet.', empty: 'No asset information is available yet.', isEmpty: true },
+          assets: { title: 'Assets', icon: '▣', accent: '#9a6ef8', summary: 'Citizen inventory', description: 'Your active and available personal assets.', isAssetMap: true },
         };
 
         const config = categoryConfig[category] || categoryConfig.skills;
+
+        if (config.isAssetMap) {
+          renderMylifeAssetMap();
+          return;
+        }
 
         if (config.isEmpty) {
           body.innerHTML = `
@@ -7863,45 +8252,34 @@ function renderAppContent(appId, mode = 'normal') {
     const hydrateMoneytreeContributorNames = async (contributions) => {
       const items = Array.isArray(contributions) ? contributions : [];
       const citizenIds = [...new Set(items
+        .filter((item) => !item?.contributor_public_name || item.contributor_public_name === 'Citizen')
         .map((item) => String(item?.citizen_id ?? item?.contributor_citizen_id ?? item?.author_citizen_id ?? '').trim())
         .filter(Boolean)
         .filter((citizenId) => !moneytreeState.contributorNameCache.has(citizenId)))];
 
-      if (!citizenIds.length) {
-        return items.map((item) => ({
-          ...item,
-          contributor_public_name: item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || 'Citizen',
-        }));
-      }
-
       const supabase = getAuthClient();
-      if (!supabase) {
-        return items.map((item) => ({
-          ...item,
-          contributor_public_name: item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || 'Citizen',
-        }));
-      }
+      if (citizenIds.length && supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('citizens')
+            .select('id, public_name')
+            .in('id', citizenIds);
 
-      try {
-        const { data, error } = await supabase
-          .from('citizens')
-          .select('id, public_name')
-          .in('id', citizenIds);
-
-        if (error) {
-          throw error;
-        }
-
-        const rows = Array.isArray(data) ? data : [];
-        rows.forEach((row) => {
-          const id = String(row?.id ?? '').trim();
-          const publicName = String(row?.public_name || 'Citizen').trim() || 'Citizen';
-          if (id) {
-            moneytreeState.contributorNameCache.set(id, publicName);
+          if (error) {
+            throw error;
           }
-        });
-      } catch (error) {
-        console.warn('MoneyTree contributor lookup failed:', error);
+
+          const rows = Array.isArray(data) ? data : [];
+          rows.forEach((row) => {
+            const id = String(row?.id ?? '').trim();
+            const publicName = String(row?.public_name || '').trim();
+            if (id && publicName) {
+              moneytreeState.contributorNameCache.set(id, publicName);
+            }
+          });
+        } catch (error) {
+          console.warn('MoneyTree contributor lookup failed:', error);
+        }
       }
 
       return items.map((item) => {
@@ -7909,7 +8287,7 @@ function renderAppContent(appId, mode = 'normal') {
         const cachedName = citizenId ? moneytreeState.contributorNameCache.get(citizenId) : null;
         return {
           ...item,
-          contributor_public_name: item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || cachedName || 'Citizen',
+          contributor_public_name: cachedName || item?.contributor_public_name || item?.public_name || item?.author_public_name || item?.citizen_name || 'Citizen',
           citizen_id: citizenId || item?.citizen_id || null,
         };
       });
@@ -8915,7 +9293,9 @@ function renderAppContent(appId, mode = 'normal') {
       const modalCard = body.querySelector('.moneytree-modal');
       if (modalCard) {
         modalCard.addEventListener('click', (event) => {
-          event.stopPropagation();
+          if (!event.target.closest('[data-social-action="open-citizen-profile"]')) {
+            event.stopPropagation();
+          }
         });
         modalCard.addEventListener('pointerdown', (event) => {
           event.stopPropagation();
@@ -9329,39 +9709,53 @@ function renderAppContent(appId, mode = 'normal') {
 
   if (appId === 'moderator') {
     body.innerHTML = `
-      <div class="moneytree-dashboard">
-        <div class="moderator-subpage-nav" role="tablist" aria-label="Moderator tools">
-          <button type="button" class="secondary-button moderator-subpage-button active" data-action="moderator-subpage" data-subpage="queue" aria-pressed="true">Moderation Queue</button>
-          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="owner" aria-pressed="false">Owner Balance</button>
-          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="polls" aria-pressed="false">Poll Management</button>
-          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="newsroom" aria-pressed="false">Newsroom</button>
-        </div>
+      <div class="moneytree-dashboard moderator-workspace">
+        <header class="moderator-header">
+          <div class="moderator-header-mark" aria-hidden="true">✦</div>
+          <div><span>TYRANNY ADMINISTRATION</span><h2>Moderator workspace</h2><p>Manage submissions and community operations.</p></div>
+        </header>
+        <nav class="moderator-subpage-nav" aria-label="Moderator tools">
+          <button type="button" class="secondary-button moderator-subpage-button active" data-action="moderator-subpage" data-subpage="queue" aria-pressed="true"><span aria-hidden="true">▤</span> Submission review</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="citizens" aria-pressed="false"><span aria-hidden="true">♙</span> Citizen management</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="owner" aria-pressed="false"><span aria-hidden="true">◈</span> Balance adjustments</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="polls" aria-pressed="false"><span aria-hidden="true">▥</span> Civic polls</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="newsroom" aria-pressed="false"><span aria-hidden="true">▣</span> News publishing</button>
+        </nav>
 
         <div class="moneytree-panel moneytree-discussion-panel moderator-subpage-panel" data-moderator-subpage="queue">
           <div class="moneytree-panel-header">
-            <h4>Moderator Dashboard</h4>
+            <div><span class="moderator-panel-kicker">MoneyTree</span><h4>Submission review</h4><p>Review pending contributions and their context.</p></div>
             <button type="button" class="moneytree-refresh-button" data-action="moderator-refresh-queue">Refresh</button>
           </div>
+          <div id="moderatorQueueNotice" aria-live="polite"></div>
+          <div id="moderatorQueueCount" class="moderator-queue-count" aria-live="polite"></div>
           <div id="moderatorQueueState" class="moneytree-empty-state"><strong>Loading moderation queue…</strong><p>Verifying moderator authorization and fetching pending submissions.</p></div>
+        </div>
+
+        <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="citizens">
+          <div class="moneytree-panel-header">
+            <div><span class="moderator-panel-kicker">Owner tool</span><h4>Citizen management</h4><p>Find and manage citizen accounts.</p></div>
+          </div>
+          <div id="moderatorCitizensState" aria-live="polite"></div>
         </div>
 
         <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="owner">
           <div class="moneytree-panel-header">
-            <h4>Owner Balance Management</h4>
+            <div><span class="moderator-panel-kicker">Owner tool</span><h4>Balance adjustments</h4><p>Record an adjustment to a citizen's balance.</p></div>
           </div>
           <div id="moderatorOwnerState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before you can adjust balances.</p></div>
         </div>
 
         <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="polls">
           <div class="moneytree-panel-header">
-            <h4>Poll Management</h4>
+            <div><span class="moderator-panel-kicker">Owner tool</span><h4>Civic polls</h4><p>Create and manage citizen ballots.</p></div>
           </div>
           <div id="moderatorPollState" class="moneytree-empty-state"><strong>Checking owner access…</strong><p>Validating project owner authorization before managing civic polls.</p></div>
         </div>
 
         <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="newsroom">
           <div class="moneytree-panel-header">
-            <h4>Newsroom</h4>
+            <div><span class="moderator-panel-kicker">Local News</span><h4>News publishing</h4><p>Draft, publish, and manage articles.</p></div>
           </div>
           <div id="moderatorNewsroomState" class="moneytree-empty-state"><strong>Loading newsroom…</strong><p>Checking moderator access before loading local articles.</p></div>
         </div>
@@ -9369,7 +9763,10 @@ function renderAppContent(appId, mode = 'normal') {
     `;
 
     const queueState = document.getElementById('moderatorQueueState');
+    const queueNotice = document.getElementById('moderatorQueueNotice');
+    const queueCount = document.getElementById('moderatorQueueCount');
     const ownerState = document.getElementById('moderatorOwnerState');
+    const citizensState = document.getElementById('moderatorCitizensState');
     const pollState = document.getElementById('moderatorPollState');
     const newsroomStateEl = document.getElementById('moderatorNewsroomState');
 
@@ -10161,6 +10558,72 @@ function renderAppContent(appId, mode = 'normal') {
       }
     };
 
+    const renderCitizenDirectory = () => {
+      const state = moderatorAppState.citizenDirectory;
+      if (!moderatorAppState.ownerAccess) {
+        citizensState.innerHTML = '<div class="moneytree-empty-state"><strong>Owner access required.</strong><p>Only the project owner may manage citizens.</p></div>';
+        return;
+      }
+      const selected = state.rows.find((row) => row.citizen_id === state.selectedId);
+      citizensState.innerHTML = `
+        <div class="moderator-citizen-search">
+          <input id="moderator-directory-search" type="search" class="moneytree-review-reason" placeholder="Search name, handle, or ID" value="${escapeHtml(state.query)}" maxlength="100" aria-label="Search citizens">
+          <button type="button" class="secondary-button" data-action="directory-search">Search</button>
+        </div>
+        ${state.error ? `<div class="moneytree-discussion-message error" role="alert">${escapeHtml(state.error)}</div>` : ''}
+        ${selected ? `
+          <section class="moneytree-review-item moderator-directory-detail">
+            <div class="moneytree-review-header"><div><span class="moderator-panel-kicker">Citizen account</span><div class="moneytree-review-title">${escapeHtml(selected.public_name)}</div><div class="moneytree-review-meta">${selected.handle ? escapeHtml('@' + selected.handle) + ' · ' : ''}${escapeHtml(selected.citizen_id)}</div></div><button type="button" class="secondary-button" data-action="directory-close">Back to list</button></div>
+            <div class="moderator-directory-facts">
+              <div><span>Balance</span><strong>${selected.balance == null ? 'Unavailable' : escapeHtml(formatCurrency(selected.balance))}</strong></div>
+              <div><span>Account status</span><strong>${escapeHtml(selected.account_status || 'Unavailable')}</strong></div>
+              <div><span>Profession</span><strong>${escapeHtml(selected.profession || 'Unavailable')}</strong></div>
+              <div><span>Education</span><strong>${escapeHtml(selected.education || 'Unavailable')}</strong></div>
+              <div><span>Registered</span><strong>${selected.registration_date ? escapeHtml(new Date(selected.registration_date).toLocaleDateString()) : 'Unavailable'}</strong></div>
+            </div>
+            <button type="button" class="moneytree-review-button approve" data-action="directory-adjust-balance">Adjust balance</button>
+          </section>
+        ` : `
+          <div class="moderator-directory-list">
+            ${state.loading ? '<div class="moneytree-empty-state"><strong>Loading citizens…</strong></div>' : ''}
+            ${!state.loading && !state.error && !state.rows.length ? '<div class="moneytree-empty-state"><strong>No citizens found.</strong></div>' : ''}
+            ${state.rows.map((row) => `<button type="button" class="moderator-citizen-result" data-directory-citizen-id="${escapeHtml(row.citizen_id)}"><strong>${escapeHtml(row.public_name)}</strong><span>${row.handle ? escapeHtml('@' + row.handle) + ' · ' : ''}${escapeHtml(row.citizen_id)}</span></button>`).join('')}
+          </div>
+          <div class="moderator-directory-pagination">
+            <button type="button" class="secondary-button" data-action="directory-prev" ${state.offset === 0 || state.loading ? 'disabled' : ''}>Previous</button>
+            <span>Page ${Math.floor(state.offset / 50) + 1}</span>
+            <button type="button" class="secondary-button" data-action="directory-next" ${!state.hasMore || state.loading ? 'disabled' : ''}>Next</button>
+          </div>
+        `}
+      `;
+      const search = citizensState.querySelector('#moderator-directory-search');
+      search?.addEventListener('input', () => { state.query = search.value; });
+      search?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); state.offset = 0; void loadCitizenDirectory(); }
+      });
+    };
+
+    const loadCitizenDirectory = async () => {
+      const state = moderatorAppState.citizenDirectory;
+      const token = ++state.requestToken;
+      state.loading = true; state.error = null; state.selectedId = null; state.rows = [];
+      renderCitizenDirectory();
+      try {
+        const { data, error } = await getAuthClient().rpc('owner_list_citizens', { p_query: state.query.trim(), p_offset: state.offset });
+        if (token !== state.requestToken) return;
+        if (error) throw error;
+        const rows = Array.isArray(data) ? data : [];
+        state.hasMore = rows.length > 50;
+        state.rows = rows.slice(0, 50);
+      } catch (error) {
+        if (token !== state.requestToken) return;
+        state.error = 'Unable to load citizens. Please try again.';
+        console.error('Citizen directory failed:', error);
+      } finally {
+        if (token === state.requestToken) { state.loading = false; renderCitizenDirectory(); }
+      }
+    };
+
     const renderOwnerBalancePanel = () => {
       if (moderatorAppState.ownerLoading) {
         ownerState.className = 'moneytree-empty-state';
@@ -10188,8 +10651,22 @@ function renderAppContent(appId, mode = 'normal') {
           </div>
 
           <div class="moneytree-review-content">
-            <label class="moneytree-review-label" for="owner-balance-target-citizen-id">Target citizen ID</label>
-            <input id="owner-balance-target-citizen-id" class="moneytree-review-reason" type="text" value="${escapeHtml(moderatorAppState.ownerTargetCitizenId)}" placeholder="citizen UUID" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''} />
+            <label class="moneytree-review-label" for="owner-citizen-search">Find citizen</label>
+            <div class="moderator-citizen-search">
+              <input id="owner-citizen-search" class="moneytree-review-reason" type="search" value="${escapeHtml(moderatorAppState.ownerSearchTerm)}" placeholder="Name, handle, or citizen ID" autocomplete="off" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''} />
+              <button type="button" class="secondary-button" data-action="owner-search-citizens" ${moderatorAppState.ownerSubmitting || moderatorAppState.ownerSearchLoading ? 'disabled' : ''}>${moderatorAppState.ownerSearchLoading ? 'Searching…' : 'Search'}</button>
+            </div>
+            <div class="moderator-citizen-results" aria-live="polite">
+              ${moderatorAppState.ownerSearchError ? `<p class="moderator-citizen-error">${escapeHtml(moderatorAppState.ownerSearchError)}</p>` : ''}
+              ${moderatorAppState.ownerSearchComplete && !moderatorAppState.ownerSearchResults.length && !moderatorAppState.ownerSearchError ? '<p>No matching citizens found.</p>' : ''}
+              ${moderatorAppState.ownerSearchResults.map((citizen) => `
+                <button type="button" class="moderator-citizen-result" data-owner-citizen-id="${escapeHtml(citizen.citizen_id)}" ${moderatorAppState.ownerSubmitting ? 'disabled' : ''}>
+                  <strong>${escapeHtml(citizen.public_name)}</strong>
+                  <span>${citizen.handle ? escapeHtml('@' + citizen.handle.replace(/^@+/, '')) + ' · ' : ''}${escapeHtml(citizen.citizen_id)}</span>
+                </button>
+              `).join('')}
+            </div>
+            ${moderatorAppState.ownerTargetCitizenId ? `<div class="moderator-citizen-selected"><strong>Selected: ${escapeHtml(moderatorAppState.ownerTargetCitizenName)}</strong><span>${escapeHtml(moderatorAppState.ownerTargetCitizenId)}</span></div>` : '<p class="moderator-citizen-hint">Search and select a citizen to continue.</p>'}
           </div>
 
           <div class="moneytree-review-content">
@@ -10222,14 +10699,33 @@ function renderAppContent(appId, mode = 'normal') {
         </div>
       `;
 
-      const targetInput = document.getElementById('owner-balance-target-citizen-id');
+      const searchInput = document.getElementById('owner-citizen-search');
       const amountInput = document.getElementById('owner-balance-amount');
       const reasonInput = document.getElementById('owner-balance-reason');
 
-      if (targetInput) {
-        targetInput.addEventListener('input', (event) => {
-          moderatorAppState.ownerTargetCitizenId = event.target.value || '';
+      if (searchInput) {
+        searchInput.addEventListener('input', (event) => {
+          moderatorAppState.ownerSearchTerm = event.target.value || '';
+          moderatorAppState.ownerTargetCitizenId = '';
+          moderatorAppState.ownerTargetCitizenName = '';
+          moderatorAppState.ownerSearchResults = [];
+          moderatorAppState.ownerSearchComplete = false;
+          moderatorAppState.ownerSearchError = null;
+          moderatorAppState.ownerSearchRequestToken++;
+          moderatorAppState.ownerSearchLoading = false;
           moderatorAppState.ownerError = null;
+          ownerState.querySelector('.moderator-citizen-results').innerHTML = '';
+          const searchButton = ownerState.querySelector('[data-action="owner-search-citizens"]');
+          searchButton.disabled = false;
+          searchButton.textContent = 'Search';
+          const selected = ownerState.querySelector('.moderator-citizen-selected');
+          if (selected) selected.remove();
+        });
+        searchInput.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void searchOwnerCitizens();
+          }
         });
       }
 
@@ -10248,12 +10744,48 @@ function renderAppContent(appId, mode = 'normal') {
       }
     };
 
+    const searchOwnerCitizens = async () => {
+      const query = moderatorAppState.ownerSearchTerm.trim();
+      const token = ++moderatorAppState.ownerSearchRequestToken;
+      moderatorAppState.ownerTargetCitizenId = '';
+      moderatorAppState.ownerTargetCitizenName = '';
+      moderatorAppState.ownerSearchResults = [];
+      moderatorAppState.ownerSearchComplete = false;
+      moderatorAppState.ownerSearchError = null;
+      if (query.length < 2 || query.length > 100) {
+        moderatorAppState.ownerSearchError = 'Enter between 2 and 100 characters.';
+        renderOwnerBalancePanel();
+        return;
+      }
+      moderatorAppState.ownerSearchLoading = true;
+      renderOwnerBalancePanel();
+      try {
+        const supabase = getAuthClient();
+        if (!supabase) throw new Error('Please sign in again.');
+        const { data, error } = await supabase.rpc('owner_search_citizens', { p_query: query });
+        if (token !== moderatorAppState.ownerSearchRequestToken) return;
+        if (error) throw error;
+        moderatorAppState.ownerSearchResults = Array.isArray(data) ? data : [];
+        moderatorAppState.ownerSearchComplete = true;
+      } catch (error) {
+        if (token !== moderatorAppState.ownerSearchRequestToken) return;
+        moderatorAppState.ownerSearchError = 'Unable to search citizens. Please try again.';
+        console.error('Citizen search failed:', error);
+      } finally {
+        if (token === moderatorAppState.ownerSearchRequestToken) {
+          moderatorAppState.ownerSearchLoading = false;
+          renderOwnerBalancePanel();
+        }
+      }
+    };
+
     const loadOwnerAccessForApp = async () => {
       const supabase = getAuthClient();
       const session = (await supabase?.auth.getSession())?.data?.session;
 
       if (!supabase || !session?.user) {
         moderatorAppState.ownerAccess = false;
+        clearOwnerCitizenLookup();
         moderatorAppState.ownerMessage = null;
         moderatorAppState.ownerError = null;
         return false;
@@ -10272,12 +10804,14 @@ function renderAppContent(appId, mode = 'normal') {
         const firstResult = Array.isArray(data) ? data[0] : data;
         moderatorAppState.ownerAccess = Boolean(firstResult?.is_owner);
         if (!moderatorAppState.ownerAccess) {
+          clearOwnerCitizenLookup();
           moderatorAppState.ownerMessage = 'Owner access required to adjust citizen balances.';
         }
         return moderatorAppState.ownerAccess;
       } catch (error) {
         console.error('Moderator owner access check failed:', error);
         moderatorAppState.ownerAccess = false;
+        clearOwnerCitizenLookup();
         moderatorAppState.ownerError = error?.message || 'Unable to verify owner access.';
         moderatorAppState.ownerMessage = null;
         return false;
@@ -10289,9 +10823,11 @@ function renderAppContent(appId, mode = 'normal') {
     const refreshOwnerPanel = async () => {
       await loadOwnerAccessForApp();
       renderOwnerBalancePanel();
+      renderCitizenDirectory();
       renderModeratorPollPanel();
 
       if (moderatorAppState.ownerAccess) {
+        if (moderatorAppState.currentSubpage === 'citizens') void loadCitizenDirectory();
         await loadModeratorPollData();
       } else {
         moderatorPollState.polls = [];
@@ -10317,9 +10853,8 @@ function renderAppContent(appId, mode = 'normal') {
 
     const handleOwnerBalanceAdjustment = async () => {
       const supabase = getAuthClient();
-      const session = (await supabase?.auth.getSession())?.data?.session;
 
-      if (!supabase || !session?.user) {
+      if (!supabase) {
         moderatorAppState.ownerError = 'Your session has expired. Please sign in again.';
         moderatorAppState.ownerMessage = null;
         return;
@@ -10330,7 +10865,7 @@ function renderAppContent(appId, mode = 'normal') {
       const reason = (moderatorAppState.ownerReason || '').trim();
 
       if (!targetCitizenId) {
-        moderatorAppState.ownerError = 'Enter a citizen ID before adjusting the balance.';
+        moderatorAppState.ownerError = 'Search for and select a citizen before adjusting the balance.';
         moderatorAppState.ownerMessage = null;
         return;
       }
@@ -10354,8 +10889,11 @@ function renderAppContent(appId, mode = 'normal') {
       moderatorAppState.ownerSubmitting = true;
       moderatorAppState.ownerError = null;
       moderatorAppState.ownerMessage = 'Applying citizen balance adjustment…';
+      renderOwnerBalancePanel();
 
       try {
+        const session = (await supabase.auth.getSession())?.data?.session;
+        if (!session?.user) throw new Error('Your session has expired. Please sign in again.');
         const requestKey = globalThis.crypto?.randomUUID?.() || `owner-balance-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const { data, error } = await supabase.rpc('owner_adjust_citizen_balance', {
           p_target_citizen_id: targetCitizenId,
@@ -10386,6 +10924,7 @@ function renderAppContent(appId, mode = 'normal') {
         moderatorAppState.ownerError = null;
         moderatorAppState.ownerAmount = '';
         moderatorAppState.ownerReason = '';
+        clearOwnerCitizenLookup();
 
         if (targetCitizenId === profileState.citizen?.id) {
           profileState.private = {
@@ -10412,6 +10951,7 @@ function renderAppContent(appId, mode = 'normal') {
     };
 
     const renderModeratorQueue = (queue) => {
+      queueCount.textContent = `${queue.length} pending ${queue.length === 1 ? 'submission' : 'submissions'}`;
       if (!queue.length) {
         queueState.className = 'moneytree-empty-state';
         queueState.innerHTML = '<strong>No pending submissions.</strong><p>Approved and rejected items clear from this queue automatically.</p>';
@@ -10427,31 +10967,37 @@ function renderAppContent(appId, mode = 'normal') {
           hour: 'numeric',
           minute: '2-digit',
         }) : 'No date';
-        const discussionContext = item.discussion_prompt ? escapeHtml(item.discussion_prompt) : 'No original discussion context available.';
-        const parentContext = item.parent_contribution_context ? escapeHtml(item.parent_contribution_context) : 'No parent contribution context — this is a root contribution.';
+        const discussionContext = item.discussion_prompt ? escapeHtml(item.discussion_prompt) : 'No discussion prompt provided.';
+        const parentContext = item.parent_contribution_id ? escapeHtml(item.parent_contribution_context || 'Parent contribution unavailable.') : '';
+        const contributorName = String(item.contributor_public_name || '').trim() || 'Citizen name unavailable';
+        const typeLabels = { question_answer: 'Answer', career_answer: 'Career answer', open_discussion: 'Discussion', challenge: 'Challenge', reply: 'Reply' };
+        const typeLabel = typeLabels[item.contribution_type] || 'Contribution';
+        const draft = moderatorAppState.rejectionDrafts[item.id] || '';
 
         return `
-          <article class="moneytree-review-item">
+          <article class="moneytree-review-item moderator-submission">
             <div class="moneytree-review-header">
               <div>
+                <span class="moderator-submission-label">Discussion</span>
                 <div class="moneytree-review-title">${escapeHtml(item.discussion_title || 'Unknown discussion')}</div>
-                <div class="moneytree-review-meta">${escapeHtml(item.contributor_public_name || 'Citizen')} • ${escapeHtml(createdAt)}</div>
               </div>
-              <span class="moneytree-review-pill">${escapeHtml(item.contribution_type || 'Contribution')}</span>
+              <span class="moneytree-review-pill">${escapeHtml(typeLabel)}</span>
             </div>
-
-            <div class="moneytree-review-content"><strong>Contribution</strong><br>${escapeHtml(item.content || 'No content provided.')}</div>
-
-            <div class="moneytree-review-content">
-              <strong>Original discussion context</strong><br>${discussionContext}
+            <div class="moderator-submission-author">
+              <span class="moderator-submission-avatar" aria-hidden="true">${escapeHtml(contributorName.charAt(0).toUpperCase())}</span>
+              <div><span class="moderator-submission-label">Contributor</span><strong>${escapeHtml(contributorName)}</strong><small>${escapeHtml(createdAt)}</small></div>
             </div>
-
-            <div class="moneytree-review-content">
-              <strong>Parent contribution context</strong><br>${parentContext}
+            <div class="moderator-submission-body">
+              <span class="moderator-submission-label">Submission</span>
+              <p>${escapeHtml(item.content || 'No content provided.')}</p>
             </div>
-
-            <label class="moneytree-review-label" for="moderator-reject-${escapeHtml(item.id || '')}">Rejection reason</label>
-            <textarea id="moderator-reject-${escapeHtml(item.id || '')}" class="moneytree-review-reason" data-action="moderator-reject-reason" data-contribution-id="${escapeHtml(item.id || '')}" rows="2" placeholder="Required when rejecting" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}></textarea>
+            <details class="moderator-submission-context">
+              <summary>Discussion context</summary>
+              <div><strong>Prompt</strong><p>${discussionContext}</p></div>
+              ${parentContext ? `<div><strong>Responding to</strong><p>${parentContext}</p></div>` : ''}
+            </details>
+            <label class="moneytree-review-label" for="moderator-reject-${escapeHtml(item.id || '')}">Reason for rejection <span>(required to reject)</span></label>
+            <textarea id="moderator-reject-${escapeHtml(item.id || '')}" class="moneytree-review-reason" data-action="moderator-reject-reason" data-contribution-id="${escapeHtml(item.id || '')}" rows="2" placeholder="Explain why this submission cannot be approved" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
             <div class="moneytree-review-actions">
               <button type="button" class="moneytree-review-button approve" data-action="moderator-approve-contribution" data-contribution-id="${escapeHtml(item.id || '')}" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}>${moderatorAppState.processingIds.includes(item.id) ? 'Processing…' : 'Approve'}</button>
               <button type="button" class="moneytree-review-button reject" data-action="moderator-reject-contribution" data-contribution-id="${escapeHtml(item.id || '')}" ${moderatorAppState.processingIds.includes(item.id) ? 'disabled' : ''}>${moderatorAppState.processingIds.includes(item.id) ? 'Processing…' : 'Reject'}</button>
@@ -10462,12 +11008,16 @@ function renderAppContent(appId, mode = 'normal') {
     };
 
     const applyModeratorQueueView = (queue) => {
-      if (moderatorAppState.error) {
-        queueState.className = 'moneytree-empty-state';
-        queueState.innerHTML = `<strong>Unable to load the moderation queue.</strong><p>${escapeHtml(moderatorAppState.error)}</p>`;
+      queueNotice.innerHTML = moderatorAppState.error
+        ? `<div class="moneytree-discussion-message error" role="alert">${escapeHtml(moderatorAppState.error)}</div>`
+        : moderatorAppState.message
+          ? `<div class="moneytree-discussion-message success" role="status">${escapeHtml(moderatorAppState.message)}</div>` : '';
+      if (moderatorAppState.error && !queue.length) {
+        queueCount.textContent = '';
+        queueState.className = 'moneytree-activity-list';
+        queueState.innerHTML = '';
         return;
       }
-
       renderModeratorQueue(queue);
     };
 
@@ -10489,7 +11039,6 @@ function renderAppContent(appId, mode = 'normal') {
 
       moderatorAppState.loading = true;
       moderatorAppState.error = null;
-      moderatorAppState.message = null;
 
       try {
         const { data, error } = await supabase.functions.invoke('get-moneytree-moderation-queue', {
@@ -10518,8 +11067,8 @@ function renderAppContent(appId, mode = 'normal') {
           ...item,
           discussion_title: item?.discussion_title ?? 'Unknown discussion',
           discussion_prompt: item?.discussion_prompt ?? '',
-          parent_contribution_context: item?.parent_contribution_context ?? 'No parent contribution context — this is a root contribution.',
-          contributor_public_name: item?.contributor_public_name ?? 'Citizen',
+          parent_contribution_context: item?.parent_contribution_context ?? '',
+          contributor_public_name: item?.contributor_public_name ?? '',
           content: typeof item?.content === 'string' ? item.content : '',
         }));
 
@@ -10586,6 +11135,7 @@ function renderAppContent(appId, mode = 'normal') {
 
         const result = Array.isArray(data) ? data[0] : data;
         const moderationState = result?.moderation_state || decision;
+        delete moderatorAppState.rejectionDrafts[contributionId];
         moderatorAppState.message = moderationState === 'approved'
           ? 'Contribution approved successfully.'
           : 'Contribution rejected successfully.';
@@ -10611,15 +11161,75 @@ function renderAppContent(appId, mode = 'normal') {
       });
     }
 
-    if (!body.dataset.moderatorActionDelegationBound) {
-      body.dataset.moderatorActionDelegationBound = 'true';
-      body.addEventListener('click', async (event) => {
+    if (body.moderatorActionHandler) {
+      body.removeEventListener('click', body.moderatorActionHandler);
+    }
+    if (body.moderatorDraftHandler) {
+      body.removeEventListener('input', body.moderatorDraftHandler);
+    }
+    body.moderatorDraftHandler = (event) => {
+      const input = event.target.closest('[data-action="moderator-reject-reason"]');
+      if (input?.dataset.contributionId) moderatorAppState.rejectionDrafts[input.dataset.contributionId] = input.value;
+    };
+    body.addEventListener('input', body.moderatorDraftHandler);
+    body.moderatorActionHandler = async (event) => {
         const subpageButton = event.target.closest('[data-action="moderator-subpage"]');
         if (subpageButton) {
           const nextSubpage = subpageButton.getAttribute('data-subpage');
           if (nextSubpage) {
             moderatorAppState.currentSubpage = nextSubpage;
             syncModeratorSubpageVisibility();
+            if (nextSubpage === 'citizens' && moderatorAppState.ownerAccess) void loadCitizenDirectory();
+          }
+          return;
+        }
+
+        const directory = moderatorAppState.citizenDirectory;
+        if (event.target.closest('[data-action="directory-search"]')) {
+          directory.offset = 0; await loadCitizenDirectory(); return;
+        }
+        if (event.target.closest('[data-action="directory-next"]')) {
+          if (directory.hasMore) { directory.offset += 50; await loadCitizenDirectory(); } return;
+        }
+        if (event.target.closest('[data-action="directory-prev"]')) {
+          directory.offset = Math.max(0, directory.offset - 50); await loadCitizenDirectory(); return;
+        }
+        if (event.target.closest('[data-action="directory-close"]')) {
+          directory.selectedId = null; renderCitizenDirectory(); return;
+        }
+        const directoryCitizen = event.target.closest('[data-directory-citizen-id]');
+        if (directoryCitizen) {
+          directory.selectedId = directoryCitizen.dataset.directoryCitizenId; renderCitizenDirectory(); return;
+        }
+        if (event.target.closest('[data-action="directory-adjust-balance"]')) {
+          const citizen = directory.rows.find((row) => row.citizen_id === directory.selectedId);
+          if (citizen && moderatorAppState.ownerAccess) {
+            moderatorAppState.ownerTargetCitizenId = citizen.citizen_id;
+            moderatorAppState.ownerTargetCitizenName = citizen.public_name;
+            moderatorAppState.ownerSearchTerm = citizen.public_name;
+            moderatorAppState.ownerSearchResults = [];
+            moderatorAppState.ownerSearchComplete = false;
+            moderatorAppState.currentSubpage = 'owner';
+            renderOwnerBalancePanel(); syncModeratorSubpageVisibility();
+          }
+          return;
+        }
+
+        if (event.target.closest('[data-action="owner-search-citizens"]')) {
+          if (moderatorAppState.ownerAccess && !moderatorAppState.ownerSubmitting && !moderatorAppState.ownerSearchLoading) await searchOwnerCitizens();
+          return;
+        }
+
+        const citizenButton = event.target.closest('[data-owner-citizen-id]');
+        if (citizenButton && moderatorAppState.ownerAccess && !moderatorAppState.ownerSubmitting) {
+          const citizen = moderatorAppState.ownerSearchResults.find((row) => row.citizen_id === citizenButton.dataset.ownerCitizenId);
+          if (citizen) {
+            moderatorAppState.ownerTargetCitizenId = citizen.citizen_id;
+            moderatorAppState.ownerTargetCitizenName = citizen.public_name;
+            moderatorAppState.ownerSearchResults = [];
+            moderatorAppState.ownerSearchComplete = false;
+            moderatorAppState.ownerError = null;
+            renderOwnerBalancePanel();
           }
           return;
         }
@@ -10981,8 +11591,8 @@ function renderAppContent(appId, mode = 'normal') {
           }
           return;
         }
-      });
-    }
+    };
+    body.addEventListener('click', body.moderatorActionHandler);
 
     syncModeratorSubpageVisibility();
     loadModeratorQueueForApp();
@@ -10994,6 +11604,14 @@ function renderAppContent(appId, mode = 'normal') {
     renderStoreApp();
     if (!storeState.hasLoaded) {
       loadStoreCatalog();
+    }
+    return;
+  }
+
+  if (appId === 'assetmap') {
+    renderAssetMapApp();
+    if (!assetMapState.loaded) {
+      void loadAssetMapData();
     }
     return;
   }
@@ -11301,7 +11919,7 @@ function renderAppContent(appId, mode = 'normal') {
 
 function openApp(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
-  const shouldRefreshApp = appId === 'moderator' || appId === 'voting' || appId === 'associates' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
+  const shouldRefreshApp = appId === 'moderator' || appId === 'voting' || appId === 'associates' || appId === 'assetmap' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
 
   if (shouldRefreshApp) {
     renderAppContent(appId, mode);
@@ -12015,6 +12633,13 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        clearOwnerCitizenLookup();
+        moderatorAppState.rejectionDrafts = {};
+        moderatorAppState.queue = [];
+        moderatorAppState.ownerAccess = false;
+        moderatorAppState.ownerAmount = '';
+        moderatorAppState.ownerReason = '';
+        moderatorAppState.ownerHistory = [];
         setAuthMessage('', '');
         showAuthView('login');
         return;

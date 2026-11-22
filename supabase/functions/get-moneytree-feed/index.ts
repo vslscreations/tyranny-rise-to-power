@@ -222,7 +222,7 @@ serve(async (req) => {
     while (moreRows) {
       const { data, error } = await adminClient
         .from('moneytree_contributions')
-        .select('id, citizen_id, discussion_id, contribution_type, parent_contribution_id, content, created_at, moderation_state')
+        .select('id, citizen_id, author:citizens!citizen_id(public_name), discussion_id, contribution_type, parent_contribution_id, content, created_at, moderation_state')
         .eq('discussion_id', discussionId)
         .order('created_at', { ascending: true })
         .order('id', { ascending: true })
@@ -283,6 +283,7 @@ serve(async (req) => {
         id: row.id,
         discussion_id: row.discussion_id,
         citizen_id: row.citizen_id,
+        contributor_public_name: (row.author as { public_name?: string } | null)?.public_name ?? null,
         contribution_type: row.contribution_type,
         parent_contribution_id: row.parent_contribution_id ?? null,
         content: row.content,

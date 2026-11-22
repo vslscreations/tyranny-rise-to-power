@@ -243,6 +243,7 @@ serve(async (req) => {
         discussion_prompt: discussion?.prompt ?? '',
         discussion_type: discussion?.discussion_type ?? 'question',
         contribution_type: contribution.contribution_type ?? 'question_answer',
+        parent_contribution_id: contribution.parent_contribution_id ?? null,
         contributor_citizen_id: contribution.citizen_id ?? null,
         contributor_public_name: contributor?.public_name ?? 'Citizen',
         parent_contribution_context: parentContext,
