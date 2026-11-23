@@ -8,6 +8,8 @@
       content="Tyranny: Rise to Power mobile interface prototype with a branded lock screen and home screen."
     />
     <title>Tyranny: Rise to Power</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="preconnect" href="https://msbaewlbbipflcmvjkjf.supabase.co" crossorigin />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#101827" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -217,22 +219,22 @@
                   <span>Avatar</span>
                   <div id="avatarPickerGrid" class="avatar-picker-grid" aria-label="Select built-in avatar">
                     <button type="button" class="avatar-option selected" data-avatar-url="./assets/avatars/aurelia-voss.svg" aria-label="Malik Vale avatar">
-                      <img src="./assets/avatars/hd/malik-vale.png" alt="Malik Vale avatar" />
+                      <img loading="lazy" decoding="async" src="./assets/avatars/hd/malik-vale.webp" alt="Malik Vale avatar" />
                     </button>
                     <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/jasper-reed.svg" aria-label="Rafael Cruz avatar">
-                      <img src="./assets/avatars/hd/rafael-cruz.png" alt="Rafael Cruz avatar" />
+                      <img loading="lazy" decoding="async" src="./assets/avatars/hd/rafael-cruz.webp" alt="Rafael Cruz avatar" />
                     </button>
                     <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/mira-sloane.svg" aria-label="Kaito Mercer avatar">
-                      <img src="./assets/avatars/hd/kaito-mercer.png" alt="Kaito Mercer avatar" />
+                      <img loading="lazy" decoding="async" src="./assets/avatars/hd/kaito-mercer.webp" alt="Kaito Mercer avatar" />
                     </button>
                     <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/dorian-kestrel.svg" aria-label="Amir Knox avatar">
-                      <img src="./assets/avatars/hd/amir-knox.png" alt="Amir Knox avatar" />
+                      <img loading="lazy" decoding="async" src="./assets/avatars/hd/amir-knox.webp" alt="Amir Knox avatar" />
                     </button>
                     <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/leah-cortez.svg" aria-label="Nia Laurent avatar">
-                      <img src="./assets/avatars/hd/nia-laurent.png" alt="Nia Laurent avatar" />
+                      <img loading="lazy" decoding="async" src="./assets/avatars/hd/nia-laurent.webp" alt="Nia Laurent avatar" />
                     </button>
                     <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/omar-tate.svg" aria-label="Camila Reyes avatar">
-                      <img src="./assets/avatars/hd/camila-reyes.png" alt="Camila Reyes avatar" />
+                      <img loading="lazy" decoding="async" src="./assets/avatars/hd/camila-reyes.webp" alt="Camila Reyes avatar" />
                     </button>
                   </div>
                   <input id="citizenAvatar" type="hidden" name="avatar" value="./assets/avatars/aurelia-voss.svg" />
@@ -285,12 +287,13 @@
       </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="./supabase-config.js"></script>
-    <script src="./supabase-client.js"></script>
-    <script src="./push-notifications.js"></script>
-    <script src="./notifications.js"></script>
-    <script src="./tutorials.js"></script>
-    <script src="./app.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="./supabase-config.js"></script>
+    <script defer src="./supabase-client.js"></script>
+    <script defer src="./push-notifications.js"></script>
+    <script defer src="./notifications.js"></script>
+    <script defer src="./tutorials.js"></script>
+    <script defer src="./onboarding.js"></script>
+    <script defer src="./app.js"></script>
   </body>
 </html>

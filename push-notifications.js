@@ -4,6 +4,8 @@ window.TyrannyPush = (() => {
   let registration = null;
   let enabled = false;
   let busy = false;
+  let initializedCitizen = null;
+  let initializedPermission = null;
   let message = '';
   let pendingOpen = new URL(location.href).searchParams.get('push') === 'inbox';
   const supported = () => isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -37,6 +39,7 @@ window.TyrannyPush = (() => {
   }
   async function start(id) {
     if(!id || busy) return;
+    if(initializedCitizen === id && initializedPermission === Notification.permission) { render(); return; }
     const changed = citizenId !== id;
     citizenId = id;
     if(!supported() || (isAppleMobile() && !standalone())) { render(); return; }
@@ -55,6 +58,9 @@ window.TyrannyPush = (() => {
       publicKey = config.publicKey;
       enabled = Boolean(subscription);
       if(subscription) await api({action:'enable',...subscription.toJSON()});
+      if(citizenId !== id) return;
+      initializedCitizen = id;
+      initializedPermission = Notification.permission;
       if(changed) message = '';
     } catch { message = 'Phone notifications could not connect. Reopen the inbox to retry.'; }
     finally { busy = false; render(); }
@@ -111,6 +117,7 @@ window.TyrannyPush = (() => {
     if(event.data?.type==='TYRANNY_PUSH_INBOX') { pendingOpen=true; openInbox(); }
   });
   async function stop() {
+    initializedCitizen=null; initializedPermission=null;
     citizenId=null; publicKey=null; enabled=false;
     if(supported()) {
       const reg=await navigator.serviceWorker.getRegistration('./');

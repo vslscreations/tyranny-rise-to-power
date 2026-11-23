@@ -4,6 +4,17 @@
   // Editorial content lives separately from rendering so more guides can be added.
   const articles = [
     {
+      id: 'welcome', category: 'Start here', title: 'What is Tyranny: Rise to Power?',
+      summary: 'Start with nothing. Build a reputation. Discover how far ambition can take you.',
+      paragraphs: [
+        'Tyranny: Rise to Power is a multiplayer, text-based political and social simulation RPG. You enter a society of real people with no starting money, assets, or diploma. From the moment you become a citizen, you begin shaping your own story.',
+        'This is the beta experience: the first taste of a much bigger world. Today, explore social discussions and available rewards, work toward your diploma and available assets, build relationships, read the news, and take part in civic polls. Check each app for its current rules and availability.',
+        'Tyranny is about people as much as progress. Debate ideas, gain a following, make friends, meet rivals, and discover that other citizens have ambitions of their own. Every new player adds another personality and another unpredictable element to society.',
+        'The broader vision includes expanded careers, entrepreneurship, campaigns for office, a presidency with economic and taxation powers, and darker paths through crime and corruption. These are future ambitions for the game, not a list of systems already playable in this beta.',
+        'More features are coming soon. Expect unfinished areas and changes as Tyranny develops. Start with the interactive tutorial, explore what is available now, and help bring this growing society to life.',
+      ], tip: 'In Tyranny, power is earned, negotiated, taken, and sometimes lost. Your rise starts with your next move.',
+    },
+    {
       id: 'mylife', category: 'Your citizen', title: 'MyLife: know your citizen',
       summary: 'Your profile, balance, career progress, and personal assets in one place.',
       paragraphs: [
@@ -101,15 +112,6 @@
       ], tip: 'A locked screen describes the current access restriction, not an available purchase.', target: 'darkweb',
     },
     {
-      id: 'moderator', category: 'Administration', title: 'Moderator: manage the community',
-      summary: 'A workspace for authorized moderators and the game owner.',
-      paragraphs: [
-        'The Moderator app brings together submission review, citizen management, balance adjustments, civic polls, news publishing, and mass notifications.',
-        'Access depends on your account permissions. Owners have additional administrative tools, including balance changes and announcements to current citizens.',
-        'Review a citizen’s identity and the action details before making an administrative change. Deletion can be blocked where protected or shared records must be preserved.',
-      ], tip: 'The app is shown only to authorized accounts. Reading this guide does not grant access.', target: 'moderator',
-    },
-    {
       id: 'tutorial', category: 'Your citizen', title: 'Tutorial: find your way around',
       summary: 'Browse short guides to the apps and features inside Tyranny.',
       paragraphs: [
@@ -144,6 +146,8 @@
   }[char]));
 
   function render(root, context) {
+    const tourButton = '<button type="button" class="tutorial-restart-tour">↻ Restart interactive tutorial</button>';
+    const bindTour = () => root.querySelector('.tutorial-restart-tour')?.addEventListener('click', () => context.restartTour?.());
     const article = articles.find((item) => item.id === selectedId);
     const icon = (item) => {
       const app = context.catalog[item.target || item.id];
@@ -157,6 +161,7 @@
         && (article.target !== 'moderator' || context.canModerate);
       root.innerHTML = `
         <div class="tutorial-shell">
+          ${tourButton}
           <button type="button" class="tutorial-back">‹ All articles</button>
           <article class="tutorial-article">
             <div class="tutorial-icon">${icon(article)}</div>
@@ -174,15 +179,17 @@
         root.querySelector(`[data-guide="${article.id}"]`)?.focus();
       };
       root.querySelector('.tutorial-open')?.addEventListener('click', () => context.openApp(article.target));
+      bindTour();
       return;
     }
 
     root.innerHTML = `
       <div class="tutorial-shell">
+        ${tourButton}
         <header class="tutorial-header">
-          <p class="tutorial-kicker">Tyranny · Citizen handbook</p>
-          <h1 tabindex="-1">Learn the game.</h1>
-          <p>Quick guides for your rise to power. Choose an app to get started.</p>
+          <p class="tutorial-kicker">Tyranny · Beta citizen handbook</p>
+          <h1 tabindex="-1">Your rise starts here.</h1>
+          <p>Real people. Competing ambitions. A society taking shape. Explore the beta today—with more features coming soon.</p>
         </header>
         <label class="tutorial-search"><span>Search articles</span><input type="search" placeholder="Try MoneyTree, polls, or assets" value="${escape(query)}" maxlength="100"></label>
         <p class="tutorial-count" role="status" aria-live="polite"></p>
@@ -221,6 +228,7 @@
       updateList();
     });
     updateList();
+    bindTour();
   }
 
   window.TyrannyTutorial = Object.freeze({ render });

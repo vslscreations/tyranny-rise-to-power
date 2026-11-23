@@ -162,12 +162,12 @@ bindGlobalCitizenProfileActions();
 // allowlists. The HD image is the presentation layer, so upgrading the art does not
 // rewrite existing citizen records or invalidate older clients.
 const builtInAvatarAssets = [
-  { url: './assets/avatars/aurelia-voss.svg', image: './assets/avatars/hd/malik-vale.png', label: 'Malik Vale' },
-  { url: './assets/avatars/jasper-reed.svg', image: './assets/avatars/hd/rafael-cruz.png', label: 'Rafael Cruz' },
-  { url: './assets/avatars/mira-sloane.svg', image: './assets/avatars/hd/kaito-mercer.png', label: 'Kaito Mercer' },
-  { url: './assets/avatars/dorian-kestrel.svg', image: './assets/avatars/hd/amir-knox.png', label: 'Amir Knox' },
-  { url: './assets/avatars/leah-cortez.svg', image: './assets/avatars/hd/nia-laurent.png', label: 'Nia Laurent' },
-  { url: './assets/avatars/omar-tate.svg', image: './assets/avatars/hd/camila-reyes.png', label: 'Camila Reyes' },
+  { url: './assets/avatars/aurelia-voss.svg', image: './assets/avatars/hd/malik-vale.webp', label: 'Malik Vale' },
+  { url: './assets/avatars/jasper-reed.svg', image: './assets/avatars/hd/rafael-cruz.webp', label: 'Rafael Cruz' },
+  { url: './assets/avatars/mira-sloane.svg', image: './assets/avatars/hd/kaito-mercer.webp', label: 'Kaito Mercer' },
+  { url: './assets/avatars/dorian-kestrel.svg', image: './assets/avatars/hd/amir-knox.webp', label: 'Amir Knox' },
+  { url: './assets/avatars/leah-cortez.svg', image: './assets/avatars/hd/nia-laurent.webp', label: 'Nia Laurent' },
+  { url: './assets/avatars/omar-tate.svg', image: './assets/avatars/hd/camila-reyes.webp', label: 'Camila Reyes' },
 ];
 
 const AVATAR_BACKGROUNDS = Object.freeze({
@@ -190,15 +190,9 @@ const profileState = {
 };
 
 const appCatalog = {
-  tutorial: {
-    name: 'Tutorial',
-    icon: '📖',
-    color: '#8bbfff',
-    unread: 0,
-  },
   social: {
     name: 'FakeBook',
-    icon: './images/icons/socialmedia.PNG',
+    icon: './images/icons/socialmedia.webp',
     color: '#8bc4ff',
     unread: 1,
   },
@@ -216,56 +210,62 @@ const appCatalog = {
   },
   moneytree: {
     name: 'MoneyTree',
-    icon: './images/icons/moneytree.PNG',
+    icon: './images/icons/moneytree.webp',
     color: '#8ae5a5',
     unread: 2,
   },
   mylife: {
     name: 'MyLife',
-    icon: './images/icons/mylife.PNG',
+    icon: './images/icons/mylife-v2.webp',
     color: '#d6b765',
     unread: 0,
   },
   store: {
     name: 'Store',
-    icon: './images/icons/store.PNG',
+    icon: './images/icons/store.webp',
     color: '#ff9f7d',
     unread: 0,
   },
   lucky7: {
     name: 'LUCKY 7',
-    icon: './assets/lucky 7/background/icon.jpg',
+    icon: './assets/lucky 7/background/icon.webp',
     color: '#ffdd57',
     unread: 0,
   },
   localnews: {
     name: 'Local News',
-    icon: './images/icons/Localnews.PNG',
+    icon: './images/icons/Localnews.webp',
     color: '#c76dff',
     unread: 5,
   },
   voting: {
     name: 'Voting booth',
-    icon: './images/icons/voting booth.PNG',
+    icon: './images/icons/voting booth.webp',
     color: '#7db4ff',
     unread: 0,
   },
   history: {
     name: 'History book',
-    icon: './images/icons/historybook.PNG',
+    icon: './images/icons/historybook.webp',
     color: '#a7a4c7',
     unread: 0,
   },
   darkweb: {
     name: 'Dark Web',
-    icon: './images/icons/dark web.PNG',
+    icon: './images/icons/dark web.webp',
     color: '#6bcab7',
     unread: 1,
     locked: true,
   },
+  tutorial: {
+    name: 'Tutorial',
+    icon: './images/icons/tutorial-v2.webp',
+    color: '#8bbfff',
+    unread: 0,
+  },
   moderator: {
     name: 'Moderator',
-    icon: '⚖',
+    icon: './images/icons/moderator-v2.webp',
     color: '#ffb86b',
     unread: 0,
   },
@@ -943,7 +943,11 @@ function formatSocialTimestamp(isoString) {
 }
 
 function normalizeHandleValue(value) {
-  const rawHandle = String(value ?? '').trim();
+  if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'object') {
+    return null;
+  }
+
+  const rawHandle = String(value).trim();
   if (!rawHandle) {
     return null;
   }
@@ -2003,7 +2007,7 @@ async function loadSocialProfileView(targetCitizenId, moneytreeAuthorButton = nu
 
 function getSafeAvatarUrl(url, fallback = './assets/avatars/aurelia-voss.svg') {
   const candidate = String(url || '').trim();
-  const match = builtInAvatarAssets.find((option) => option.url === candidate || option.image === candidate);
+  const match = builtInAvatarAssets.find((option) => option.url === candidate || option.image === candidate || option.image.replace(/\.webp$/, '.png') === candidate);
   if (match) return match.image;
   const fallbackMatch = builtInAvatarAssets.find((option) => option.url === fallback || option.image === fallback);
   return fallbackMatch?.image || builtInAvatarAssets[0].image;
@@ -2409,17 +2413,29 @@ async function loadSocialFeed(tabName = socialState.activeTab) {
   }
 }
 
-async function ensureCurrentCitizenHandleStatus() {
+let handleStatusRequest = null;
+function ensureCurrentCitizenHandleStatus() {
+  if (socialState.currentCitizenHandle) return Promise.resolve(socialState.currentCitizenHandle);
+  if (handleStatusRequest) return handleStatusRequest;
+  const request = fetchCurrentCitizenHandleStatus().finally(() => {
+    if (handleStatusRequest === request) handleStatusRequest = null;
+  });
+  handleStatusRequest = request;
+  return handleStatusRequest;
+}
+async function fetchCurrentCitizenHandleStatus() {
+  const citizenId = profileState.citizen?.id;
   const supabase = getAuthClient();
   if (!supabase) {
     return null;
   }
 
   socialState.handleOnboarding.checking = true;
-  renderSocialApp();
+  if (activeAppId === 'social') renderSocialApp();
 
   try {
     const { data, error } = await supabase.rpc('get_current_citizen_social_handle');
+    if (citizenId !== profileState.citizen?.id) return null;
     if (error) {
       throw error;
     }
@@ -2435,14 +2451,17 @@ async function ensureCurrentCitizenHandleStatus() {
     }
     return nextHandle;
   } catch (error) {
+    if (citizenId !== profileState.citizen?.id) return null;
     console.error('social handle status check failed', error);
     socialState.currentCitizenHandle = null;
     socialState.handleOnboarding.open = true;
     socialState.handleOnboarding.error = error?.message || 'Unable to confirm your handle right now.';
     return null;
   } finally {
-    socialState.handleOnboarding.checking = false;
-    renderSocialApp();
+    if (citizenId === profileState.citizen?.id) {
+      socialState.handleOnboarding.checking = false;
+      if (activeAppId === 'social') renderSocialApp();
+    }
   }
 }
 
@@ -2809,6 +2828,7 @@ function normalizeSocialChatMessage(record) {
 }
 
 async function loadSocialChatMessages() {
+  const epoch = authBootstrapEpoch;
   const supabase = getAuthClient();
   if (!supabase) {
     socialState.chat.loading = false;
@@ -2824,6 +2844,7 @@ async function loadSocialChatMessages() {
 
   try {
     const { data, error } = await supabase.rpc('get_recent_social_chat_messages', { p_limit: 100 });
+    if (epoch !== authBootstrapEpoch) return;
     if (error) {
       throw error;
     }
@@ -2837,12 +2858,15 @@ async function loadSocialChatMessages() {
     socialState.chat.hasLoaded = true;
     socialState.chat.error = null;
   } catch (error) {
+    if (epoch !== authBootstrapEpoch) return;
     console.error('social chat load failed', error);
     socialState.chat.error = error?.message || 'Unable to load the Social Chat room right now.';
     socialState.chat.messages = [];
   } finally {
-    socialState.chat.loading = false;
-    renderSocialApp();
+    if (epoch === authBootstrapEpoch) {
+      socialState.chat.loading = false;
+      renderSocialApp();
+    }
   }
 }
 
@@ -2863,7 +2887,7 @@ function cleanupSocialChatRealtime() {
 
 function ensureSocialChatRealtime() {
   const supabase = getAuthClient();
-  if (!supabase || socialState.chat.channel) {
+  if (!supabase || socialState.chat.channel || activeAppId !== 'social' || document.hidden || !socialState.chat.open) {
     return;
   }
 
@@ -3035,7 +3059,7 @@ async function removeSocialChatMessage(messageId) {
 function renderSocialApp() {
   const appWindow = ensureAppWindow('social');
   const body = appWindow.querySelector('.app-body');
-  if (socialState.chat.open) {
+  if (socialState.chat.open && activeAppId === 'social' && !document.hidden) {
     ensureSocialChatRealtime();
     if (!socialState.chat.hasLoaded && !socialState.chat.loading) {
       loadSocialChatMessages();
@@ -3499,7 +3523,7 @@ function renderSocialApp() {
     <div class="social-shell">
       <header class="social-header social-brand-header">
         <div class="social-brand-lockup">
-          <img class="social-brand-mark" src="./images/icons/socialmedia.PNG" alt="FakeBook logo" />
+          <img class="social-brand-mark" src="./images/icons/socialmedia.webp" alt="FakeBook logo" />
           <h3>FakeBook</h3>
         </div>
       </header>
@@ -5049,30 +5073,54 @@ function renderAppGrid() {
   });
 }
 
+function isModeratorDevOverrideEnabled() {
+  try {
+    if (window.TYRANNY_DEBUG_MODERATOR_ACCESS === true) {
+      return true;
+    }
+    const localOverride = localStorage.getItem('tyranny_debug_moderator_access');
+    return localOverride === 'true';
+  } catch (error) {
+    return false;
+  }
+}
+
 async function refreshModeratorAppVisibility() {
+  const epoch = authBootstrapEpoch;
   const supabase = getAuthClient();
   const session = (await supabase?.auth.getSession())?.data?.session;
+  const localDevOverride = isModeratorDevOverrideEnabled();
 
   if (!supabase || !session?.user) {
+    if (localDevOverride || window.location.protocol === 'file:') {
+      moderatorAppState.visible = true;
+      renderAppGrid();
+      return true;
+    }
+
     moderatorAppState.visible = false;
     renderAppGrid();
     return false;
   }
 
   try {
-    const { data, error } = await supabase.functions.invoke('get-moneytree-moderation-queue', {
-      method: 'GET',
-    });
+    // Supabase queries are thenable builders, not native Promises with .catch().
+    const accessResults = await Promise.allSettled([
+      supabase.rpc('can_access_moderator_app'),
+      supabase.rpc('is_owner_for_authenticated_user'),
+    ]);
+    if (epoch !== authBootstrapEpoch) return false;
 
-    const canAccessQueue = !error && Boolean(data || (Array.isArray(data) && data.length >= 0));
+    const canAccessQueue = localDevOverride || accessResults.some((result) =>
+      result.status === 'fulfilled' && !result.value?.error && result.value?.data === true);
     moderatorAppState.visible = canAccessQueue;
     renderAppGrid();
     return canAccessQueue;
   } catch (error) {
     console.warn('Moderator app visibility check failed:', error);
-    moderatorAppState.visible = false;
+    moderatorAppState.visible = localDevOverride || window.location.protocol === 'file:';
     renderAppGrid();
-    return false;
+    return moderatorAppState.visible;
   }
 }
 
@@ -5196,9 +5244,11 @@ function ensureAppWindow(appId) {
   return appWindow;
 }
 
-async function loadCitizenProfile() {
+async function loadCitizenProfile(knownCitizen = null) {
+  const epoch = authBootstrapEpoch;
   const supabase = getAuthClient();
   const session = (await supabase?.auth.getSession())?.data?.session;
+  if (epoch !== authBootstrapEpoch) return null;
 
   player.balance = 'Loading...';
   renderPlayerDetails();
@@ -5211,12 +5261,15 @@ async function loadCitizenProfile() {
 
   const loadToken = ++profileState.citizenLoadToken;
 
-  const { data: citizen, error: citizenError } = await supabase
+  const { data: citizen, error: citizenError } = knownCitizen?.auth_user_id === session.user.id
+    ? { data: knownCitizen, error: null }
+    : await supabase
     .from('citizens')
     .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, avatar_background, political_party, registration_date, created_at')
     .eq('auth_user_id', session.user.id)
     .maybeSingle();
 
+  if (loadToken !== profileState.citizenLoadToken) return null;
   if (citizenError && citizenError.code !== 'PGRST116') {
     console.error('citizen profile load failed', citizenError);
     profileState.privateLoadError = 'Unable to load your citizen record.';
@@ -5312,7 +5365,7 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     productKey: 'basic_home',
     name: 'Basic Home',
     description: 'Your first house. It ensures you and your family have a place to sleep. A necessary responsibility for a man of power.',
-    image: './assets/asset-map/house-background.png',
+    image: './assets/asset-map/house-background.webp',
     layer: 'house',
     backendProductKey: 'basic_home',
   },
@@ -5320,7 +5373,7 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     productKey: 'basic_vehicle',
     name: 'Basic Vehicle',
     description: 'Your first vehicle. It ensures that you have reliable transportation. It\'s necessary to complete certain tasks and to participate in delivery jobs.',
-    image: './assets/asset-map/basic-vehicle.png',
+    image: './assets/asset-map/basic-vehicle.webp',
     layer: 'vehicle',
     backendProductKey: 'basic_vehicle',
   },
@@ -5328,7 +5381,7 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     productKey: 'laptop',
     name: 'Laptop',
     description: 'Your first real purchase. Necessary to find your first job and start making more money!!',
-    image: './assets/asset-map/laptop.png',
+    image: './assets/asset-map/laptop.webp',
     layer: 'laptop',
     backendProductKey: 'laptop',
   },
@@ -5336,7 +5389,7 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     productKey: 'high_school_diploma',
     name: 'High School Diploma',
     description: 'Earn your verified high school diploma. It’s necessary to move forward in any career. It’s the minimum expectation of every Tyranny citizen!',
-    image: './assets/asset-map/high-school-diploma.png',
+    image: './assets/asset-map/high-school-diploma.webp',
     layer: 'diploma',
     backendProductKey: 'high_school_diploma',
   },
@@ -5344,7 +5397,7 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     productKey: 'criminal_handbook',
     name: 'Criminal Handbook',
     description: 'Gives the average citizen tips on how to become a criminal. Buy at your own risk!!! You might just end up in jail.',
-    image: './assets/asset-map/criminal-handbook.png',
+    image: './assets/asset-map/criminal-handbook.webp',
     layer: 'handbook',
     backendProductKey: 'criminal_handbook',
   },
@@ -7923,6 +7976,7 @@ function renderAppContent(appId, mode = 'normal') {
     window.TyrannyTutorial.render(body, {
       catalog: appCatalog,
       canModerate: moderatorAppState.visible,
+      restartTour: () => window.TyrannyOnboarding.restart(getCitizenTourContext()),
       openApp: (target) => openApp(target, appCatalog[target]?.locked ? 'locked' : 'normal'),
     });
     return;
@@ -9227,7 +9281,7 @@ function renderAppContent(appId, mode = 'normal') {
         <div class="moneytree-reference-shell">
           <header class="moneytree-app-header">
             <div class="moneytree-brand-lockup">
-              <img class="moneytree-brand-mark" src="./images/icons/moneytree.PNG" alt="MoneyTree logo" />
+              <img class="moneytree-brand-mark" src="./images/icons/moneytree.webp" alt="MoneyTree logo" />
               <div class="moneytree-brand-title">MoneyTree</div>
             </div>
             <div class="moneytree-header-actions">
@@ -9559,7 +9613,7 @@ function renderAppContent(appId, mode = 'normal') {
         <div class="moneytree-reference-shell moneytree-loading-shell">
           <header class="moneytree-app-header">
             <div class="moneytree-brand-lockup">
-              <img class="moneytree-brand-mark" src="./images/icons/moneytree.PNG" alt="MoneyTree logo" />
+              <img class="moneytree-brand-mark" src="./images/icons/moneytree.webp" alt="MoneyTree logo" />
               <div class="moneytree-brand-title">MoneyTree</div>
             </div>
             <div class="moneytree-header-actions">
@@ -9804,7 +9858,9 @@ function renderAppContent(appId, mode = 'normal') {
       clearInterval(moneytreeState.clockInTimer);
     }
 
+    let lastExpiredClockCheck = 0;
     moneytreeState.clockInTimer = setInterval(() => {
+      if (document.hidden || activeAppId !== 'moneytree') return;
       const root = document.querySelector('[data-moneytree-clockin-root]');
       if (!root || !moneytreeState.clockInStatus || !moneytreeState.clockInStatus.window_is_open || moneytreeState.clockInStatus.already_claimed) {
         return;
@@ -9825,7 +9881,8 @@ function renderAppContent(appId, mode = 'normal') {
         countdownEl.textContent = formatClockInCountdown(remainingSeconds);
       }
 
-      if (remainingSeconds <= 0) {
+      if (remainingSeconds <= 0 && Date.now() - lastExpiredClockCheck >= 30000) {
+        lastExpiredClockCheck = Date.now();
         loadClockInStatus();
       }
     }, 1000);
@@ -12173,7 +12230,31 @@ function renderAppContent(appId, mode = 'normal') {
   }
 }
 
+function getCitizenTourContext() {
+  if (!authState.ready || !profileState.citizen?.id) return null;
+  return {
+    citizenId: profileState.citizen.id,
+    userId: profileState.citizen.auth_user_id,
+    canModerate: moderatorAppState.visible,
+    home: () => {
+      window.TyrannyNotifications?.close();
+      returnHome();
+    },
+    open: (id, section) => {
+      if (id === 'moderator' && !moderatorAppState.visible) return;
+      if (id === 'mylife') {
+        profileState.isEditing = false;
+        renderAppContent('mylife');
+      }
+      if (id === 'social') closeSocialProfileView();
+      openApp(id, appCatalog[id]?.locked ? 'locked' : 'normal');
+      if (section) document.querySelector(`#app-mylife [data-category="${section}"]`)?.click();
+    },
+  };
+}
+
 function openApp(appId, mode = 'normal') {
+  if (appId !== 'social') cleanupSocialChatRealtime();
   const appWindow = ensureAppWindow(appId);
   const shouldRefreshApp = appId === 'tutorial' || appId === 'moderator' || appId === 'voting' || appId === 'associates' || appId === 'assetmap' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
 
@@ -12189,6 +12270,10 @@ function openApp(appId, mode = 'normal') {
   });
 
   activeAppId = appId;
+  if (appId === 'social' && socialState.chat.open && !document.hidden) {
+    ensureSocialChatRealtime();
+    if (!socialState.chat.loading) void loadSocialChatMessages();
+  }
   homeScreen.classList.add('hidden');
   lockScreen.classList.add('hidden');
   notificationCenter.classList.add('hidden');
@@ -12198,6 +12283,7 @@ function openApp(appId, mode = 'normal') {
 }
 
 function returnHome() {
+  cleanupSocialChatRealtime();
   document.querySelectorAll('.app-window').forEach((windowNode) => {
     windowNode.classList.remove('active');
   });
@@ -12331,6 +12417,7 @@ function initializeAvatarPicker() {
 }
 
 async function checkCitizenRecord(session) {
+  const epoch = authBootstrapEpoch;
   const supabase = getAuthClient();
   if (!supabase || !session?.user) {
     return null;
@@ -12342,6 +12429,8 @@ async function checkCitizenRecord(session) {
       .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, avatar_background, political_party, registration_date, created_at')
       .eq('auth_user_id', session.user.id)
       .maybeSingle();
+
+    if (epoch !== authBootstrapEpoch) return null;
 
     if (error) {
       if (error.code === 'PGRST116') {
@@ -12357,19 +12446,7 @@ async function checkCitizenRecord(session) {
 
     authState.hasCitizen = Boolean(data);
     if (data) {
-      const hasCompleteCitizenState = Boolean(
-        profileState.citizen && (
-          profileState.citizen.id ||
-          profileState.citizen.citizen_id ||
-          profileState.citizen.registration_date ||
-          profileState.citizen.created_at ||
-          profileState.citizen.avatar_type
-        )
-      );
-
-      if (!hasCompleteCitizenState) {
-        profileState.citizen = null;
-      }
+      profileState.citizen = data;
 
       hideCitizenSetup();
       return true;
@@ -12425,7 +12502,18 @@ async function handleRecoveryCallback() {
   }
 }
 
-async function handleAuthSession() {
+let authBootstrapRequest = null;
+let authBootstrapEpoch = 0;
+function handleAuthSession() {
+  if (authBootstrapRequest) return authBootstrapRequest;
+  const request = bootstrapAuthSession().finally(() => {
+    if (authBootstrapRequest === request) authBootstrapRequest = null;
+  });
+  authBootstrapRequest = request;
+  return request;
+}
+async function bootstrapAuthSession() {
+  const epoch = authBootstrapEpoch;
   authState.initializing = true;
   authState.ready = false;
 
@@ -12446,6 +12534,7 @@ async function handleAuthSession() {
 
   try {
     const { data: { session }, error } = await supabase.auth.getSession();
+    if (epoch !== authBootstrapEpoch) return;
     const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
     diagnostics.projectUrl = window.TYRANNY_SUPABASE_CONFIG?.url ?? null;
     diagnostics.persistedSessionKeys = Object.keys(localStorage).filter((key) => /supabase|sb-|auth/.test(key)).length;
@@ -12462,6 +12551,7 @@ async function handleAuthSession() {
     }
 
     if (!session) {
+      window.TyrannyOnboarding?.stop();
       window.TyrannyNotifications?.stop();
       diagnostics.sessionExists = false;
       diagnostics.userId = null;
@@ -12492,6 +12582,7 @@ async function handleAuthSession() {
     }
 
     const citizenStatus = await checkCitizenRecord(session);
+    if (epoch !== authBootstrapEpoch) return;
     if (citizenStatus === null) {
       showAuthView('login');
       authState.initializing = false;
@@ -12516,8 +12607,8 @@ async function handleAuthSession() {
       }
     }
 
-    await loadCitizenProfile();
-    await refreshModeratorAppVisibility();
+    await Promise.all([loadCitizenProfile(profileState.citizen), refreshModeratorAppVisibility()]);
+    if (epoch !== authBootstrapEpoch) return;
 
     hideCitizenSetup();
     authScreen.classList.add('hidden');
@@ -12528,8 +12619,10 @@ async function handleAuthSession() {
     authState.initializing = false;
     authState.ready = true;
     window.TyrannyNotifications?.start(profileState.citizen?.id);
+    window.TyrannyOnboarding?.ready(getCitizenTourContext());
   } catch (error) {
     console.error('session handling failed', error);
+    if (epoch !== authBootstrapEpoch) return;
     const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
     diagnostics.sessionExists = false;
     diagnostics.userId = null;
@@ -12630,31 +12723,9 @@ async function handleLogin(event) {
       return;
     }
 
-    const citizenStatus = await checkCitizenRecord(data.session);
-    if (citizenStatus === null) {
-      return;
+    if (!authState.ready || profileState.citizen?.auth_user_id !== data.user.id) {
+      await handleAuthSession();
     }
-
-    if (!citizenStatus) {
-      showCitizenSetup();
-      return;
-    }
-
-    await loadCitizenProfile();
-    await refreshModeratorAppVisibility();
-
-    const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
-    diagnostics.sessionExists = Boolean(data.session);
-    diagnostics.userId = data.user.id;
-    diagnostics.persistedSessionKeys = Object.keys(localStorage).filter((key) => /supabase|sb-|auth/.test(key)).length;
-    diagnostics.lastUpdatedAt = new Date().toISOString();
-
-    setAuthMessage('', '');
-    showAuthView('login');
-    authScreen.classList.add('hidden');
-    lockScreen.classList.remove('hidden');
-    authState.initializing = false;
-    authState.ready = true;
   } catch (error) {
     console.error('login failed', error);
     authState.initializing = false;
@@ -12776,6 +12847,8 @@ async function handleCitizenSetup(event) {
     lockScreen.classList.remove('hidden');
     setCitizenSetupMessage('', '');
     setAuthMessage('Citizen profile created successfully.', 'success');
+    window.TyrannyOnboarding?.created(session.user.id);
+    await handleAuthSession();
   } catch (error) {
     console.error('citizen setup failed', error);
     setCitizenSetupMessage('Citizen creation failed. Please try again.', 'error');
@@ -12918,6 +12991,24 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        authBootstrapEpoch++;
+        authBootstrapRequest = null;
+        authState.ready = false;
+        authState.hasCitizen = false;
+        profileState.citizenLoadToken++;
+        profileState.citizen = null;
+        profileState.private = null;
+        socialState.currentCitizenHandle = null;
+        handleStatusRequest = null;
+        cleanupSocialChatRealtime();
+        activeAppId = null;
+        Object.assign(socialState.chat, { open: false, loading: false, hasLoaded: false, messages: [], onlineCount: 0, error: null });
+        if (window.__moneytreeState?.clockInTimer) clearInterval(window.__moneytreeState.clockInTimer);
+        // Remove cached account views before another citizen can sign in.
+        document.querySelectorAll('.app-window').forEach(node => node.remove());
+        moderatorAppState.visible = false;
+        renderAppGrid();
+        window.TyrannyOnboarding?.stop();
         void window.TyrannyPush?.stop();
         moderatorAppState.announcement = { title: '', body: '', preview: false, busy: false, requestId: null, error: '', message: '' };
         window.TyrannyNotifications?.stop();
@@ -12939,11 +13030,17 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        handleAuthSession();
+        // Supabase can emit SIGNED_IN on tab focus. Refreshing a token does not
+        // require downloading the profile or rebuilding the game screen.
+        if (!authState.ready || profileState.citizen?.auth_user_id !== session?.user?.id) {
+          setTimeout(() => {
+            if (!authState.ready || profileState.citizen?.auth_user_id !== session?.user?.id) void handleAuthSession();
+          }, 0);
+        }
       }
 
       if (event === 'USER_UPDATED' && session && !session.user.email_confirmed_at) {
-        handleAuthSession();
+        setTimeout(() => void handleAuthSession(), 0);
       }
     });
   }
@@ -12995,18 +13092,10 @@ function initializePhone() {
       return;
     }
 
-    const citizenStatus = await checkCitizenRecord(session);
-    if (citizenStatus === null) {
-      return;
+    if (!authState.ready || profileState.citizen?.auth_user_id !== session.user.id) {
+      await handleAuthSession();
     }
-
-    if (!citizenStatus) {
-      showCitizenSetup();
-      return;
-    }
-
-    await loadCitizenProfile();
-    await refreshModeratorAppVisibility();
+    if (!authState.ready || !authState.hasCitizen) return;
 
     homeScreen.classList.remove('hidden');
     lockScreen.classList.add('hidden');
@@ -13078,6 +13167,13 @@ function initializePhone() {
   }
 
   initializeAuthUi();
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) cleanupSocialChatRealtime();
+    else if (activeAppId === 'social' && socialState.chat.open) {
+      ensureSocialChatRealtime();
+      void loadSocialChatMessages();
+    }
+  });
   setAuthMessage('', '');
   handleAuthSession();
   setInterval(setClock, 30000);

@@ -3,6 +3,8 @@ window.TyrannyNotifications = (() => {
   const state = { citizenId: null, items: [], unread: 0, hasMore: false, unreadOnly: false, loading: false, error: '', token: 0, serverTime: null };
   let timer = null;
   let lastFocus = null;
+  let nextPollAt = 0;
+  let failures = 0;
   const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const panel = () => document.getElementById('notificationCenter');
   const icons = { moneytree: '✦', social: '◌', messages: '✉', account: '◈', world: '◎' };
@@ -18,7 +20,7 @@ window.TyrannyNotifications = (() => {
       button.setAttribute('aria-expanded', String(!panel().classList.contains('hidden')));
     }
     const list = document.getElementById('notificationList');
-    if (!list) return;
+    if (!list || panel().classList.contains('hidden')) return;
     list.innerHTML = `
       <section id="phonePushSettings" class="phone-push-settings" aria-label="Phone notification settings"></section>
       <div class="notification-toolbar">
@@ -47,18 +49,21 @@ window.TyrannyNotifications = (() => {
     window.TyrannyPush?.render();
   }
 
-  async function load(append = false) {
+  async function load(append = false, badgeOnly = false) {
     if (!state.citizenId || state.loading) return;
     const token = state.token;
     state.loading = true;
     state.error = '';
     render();
     try {
-      const { data, error } = await getAuthClient().rpc('get_game_notifications', {
+      const { data, error } = await getAuthClient().rpc(badgeOnly ? 'get_game_notification_unread_count' : 'get_game_notifications', badgeOnly ? {} : {
         p_offset: append ? state.items.length : 0, p_unread_only: state.unreadOnly,
       });
       if (token !== state.token) return;
       if (error) throw error;
+      failures = 0;
+      nextPollAt = Date.now() + (panel().classList.contains('hidden') ? 60000 : 30000);
+      if (badgeOnly) { state.unread = Number(data || 0); return; }
       const items = Array.isArray(data?.items) ? data.items : [];
       state.items = append ? [...new Map([...state.items, ...items].map(item => [item.id, item])).values()] : items;
       state.unread = Number(data?.unread_count || 0);
@@ -66,10 +71,16 @@ window.TyrannyNotifications = (() => {
       state.serverTime = data?.server_time || null;
     } catch (error) {
       if (token !== state.token) return;
+      failures++;
+      nextPollAt = Date.now() + Math.min(300000, 30000 * (2 ** failures));
       state.error = 'Notifications could not be loaded. Please try Refresh.';
       console.warn('Notification inbox failed:', error);
     } finally {
-      if (token === state.token) { state.loading = false; render(); }
+      if (token === state.token) {
+        state.loading = false; render();
+        // The inbox may have opened while its background badge request ran.
+        if (badgeOnly && !panel().classList.contains('hidden')) void load();
+      }
     }
   }
 
@@ -111,9 +122,12 @@ window.TyrannyNotifications = (() => {
   }
   function stop() {
     clearInterval(timer); timer = null;
+    nextPollAt = 0; failures = 0;
     state.token++;
     Object.assign(state, { citizenId: null, items: [], unread: 0, hasMore: false, loading: false, error: '', unreadOnly: false });
     panel()?.classList.add('hidden');
+    const list = document.getElementById('notificationList');
+    if (list) list.innerHTML = '';
     render();
   }
   function start(citizenId) {
@@ -122,12 +136,18 @@ window.TyrannyNotifications = (() => {
     state.citizenId = citizenId;
     void window.TyrannyPush?.start(citizenId).then(() => window.TyrannyPush.openInbox());
     if (!timer) {
-      void load();
-      timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);
+      poll();
+      timer = setInterval(poll, 30000);
     }
   }
 
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) void load(); });
+  function poll() {
+    if (!document.hidden && navigator.onLine !== false && Date.now() >= nextPollAt) {
+      void load(false, panel().classList.contains('hidden'));
+    }
+  }
+  document.addEventListener('visibilitychange', poll);
+  window.addEventListener('online', poll);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !panel().classList.contains('hidden')) close();
   });

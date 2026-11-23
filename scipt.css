@@ -186,7 +186,7 @@ button {
 }
 
 .screen-lock {
-  background: url('./images/wallpaper.PNG') center/cover no-repeat;
+  background: url('./images/wallpaper.webp') center/cover no-repeat;
   padding-top: 72px;
 }
 
@@ -310,6 +310,33 @@ button {
 .phone-push-settings button { min-height: 44px; border: 0; border-radius: 10px; padding: 10px 14px; background: #285c96; color: white; font: inherit; font-size: 0.78rem; cursor: pointer; }
 .phone-push-settings button:disabled { opacity: 0.5; cursor: default; }
 .phone-push-settings button:focus-visible { outline: 3px solid #568bd1; outline-offset: 3px; }
+
+.tutorial-restart-tour { display: block; width: 100%; min-height: 48px; margin-bottom: 16px; padding: 12px; border: 1px solid #b2cbe9; border-radius: 14px; background: #e8f1ff; color: #244f84; font: inherit; font-size: 0.85rem; font-weight: 750; cursor: pointer; }
+.citizen-tour { position: fixed; z-index: 10000; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 24px)); color: #172943; }
+.tour-card { max-height: min(65dvh, 520px); overflow-y: auto; padding: 20px; background: #fff; border: 1px solid #c3d3e9; border-radius: 22px; box-shadow: 0 14px 60px #08142666; }
+.welcome-tour { inset: 0; width: auto; transform: none; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; justify-items: center; padding: 16px; background: #061324de; backdrop-filter: blur(6px); }
+.tour-card { min-width: 0; box-sizing: border-box; overflow-wrap: break-word; }
+.tour-card h2:focus { outline: none; }
+.welcome-tour .tour-card { width: min(440px, 100%); box-sizing: border-box; max-height: 90dvh; background: linear-gradient(155deg, #f3f7ff, #fff); padding: 28px; }
+.tour-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.65rem; color: #55708f; font-weight: 750; letter-spacing: 0.04em; }
+.tour-top b { background: #ffe6ac; padding: 3px 6px; border-radius: 5px; color: #624812; }
+.tour-top button { background: transparent; border: 0; padding: 10px 4px; min-height: 44px; color: #466384; font: inherit; cursor: pointer; }
+.tour-card progress { display: block; width: 100%; height: 5px; margin: 8px 0 16px; accent-color: #326fc2; }
+.tour-card h2 { font-size: 1.3rem; line-height: 1.2; margin: 0 0 12px; color: #142b49; }
+.welcome-tour h2 { font-size: 2rem; letter-spacing: -0.04em; }
+.tour-card p { font-size: 0.86rem; line-height: 1.65; margin: 0 0 12px; }
+.tour-card .tour-note { font-size: 0.76rem; line-height: 1.55; background: #eef4fc; padding: 10px 12px; border-radius: 10px; color: #48617f; }
+.tour-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.tour-controls button { min-height: 44px; padding: 10px 12px; border-radius: 10px; background: #eef3f9; color: #244a79; border: 0; font: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+.tour-controls .tour-next { margin-left: auto; background: #245f9e; color: #fff; }
+.tour-card button:focus-visible { outline: 3px solid #73a6ed; outline-offset: 2px; }
+.tour-compact { padding: 10px 16px; }
+.tour-compact h2 { font-size: 1rem; margin-bottom: 4px; }
+.tour-compact progress { margin: 0 0 8px; }
+.tour-compact .tour-controls { margin-top: 8px; }
+.citizen-tour-active .app-window .app-body { padding-bottom: 360px; }
+.tour-highlight { outline: 3px solid #80b6ff !important; outline-offset: 5px; }
+@media (prefers-reduced-motion: reduce) { .citizen-tour * { scroll-behavior: auto; } }
 
 .avatar {
   display: inline-grid;
@@ -796,7 +823,7 @@ button {
 .home-wallpaper {
   position: absolute;
   inset: 0;
-  background: url('./images/homescreen.png') center/cover no-repeat;
+  background: url('./images/homescreen.webp') center/cover no-repeat;
   opacity: 0.98;
   filter: saturate(1) brightness(0.9);
 }
@@ -3492,7 +3519,7 @@ button {
 
 #app-lucky7 .app-body {
   padding: 8px 12px 12px;
-  background-image: linear-gradient(180deg, rgba(12, 10, 8, 0.55), rgba(12, 10, 8, 0.77)), url('./assets/lucky%207/background/background.jpg');
+  background-image: linear-gradient(180deg, rgba(12, 10, 8, 0.55), rgba(12, 10, 8, 0.77)), url('./assets/lucky%207/background/background.webp');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
