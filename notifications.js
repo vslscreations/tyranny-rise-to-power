@@ -174,5 +174,6 @@ window.TyrannyNotifications = (() => {
       }
     }
   });
-  return { start, stop, render, toggle, close, refresh: load };
+  return { start, stop, render, toggle, close, refresh: load,
+    refreshBadge: () => load(false, panel().classList.contains('hidden')) };
 })();

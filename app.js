@@ -194,7 +194,7 @@ const appCatalog = {
     name: 'FakeBook',
     icon: './images/icons/socialmedia.webp',
     color: '#8bc4ff',
-    unread: 1,
+    unread: 0,
   },
   associates: {
     name: 'Contacts',
@@ -212,7 +212,7 @@ const appCatalog = {
     name: 'MoneyTree',
     icon: './images/icons/moneytree.webp',
     color: '#8ae5a5',
-    unread: 2,
+    unread: 0,
   },
   mylife: {
     name: 'MyLife',
@@ -236,7 +236,7 @@ const appCatalog = {
     name: 'Local News',
     icon: './images/icons/Localnews.webp',
     color: '#c76dff',
-    unread: 5,
+    unread: 0,
   },
   voting: {
     name: 'Voting booth',
@@ -254,7 +254,7 @@ const appCatalog = {
     name: 'Dark Web',
     icon: './images/icons/dark web.webp',
     color: '#6bcab7',
-    unread: 1,
+    unread: 0,
     locked: true,
   },
   tutorial: {
@@ -4978,7 +4978,9 @@ function renderPlayerDetails() {
   }
 }
 
+let currentBalanceVersion = 0;
 async function refreshCitizenBalanceFromSupabase(citizenId) {
+  const epoch = authBootstrapEpoch;
   const supabase = getAuthClient();
   if (!supabase || !citizenId) {
     return null;
@@ -5016,12 +5018,22 @@ async function refreshCitizenBalanceFromSupabase(citizenId) {
       return null;
     }
 
-    if (isCurrentCitizen) {
+    if (isCurrentCitizen && epoch === authBootstrapEpoch && profileState.citizen?.id === citizenId) {
+      currentBalanceVersion++;
       profileState.private = {
         ...(profileState.private || {}),
         balance: nextBalance,
       };
-      applyCitizenProfile(profileState.citizen);
+      player.balance = formatCurrency(nextBalance);
+      // Update the numbers in place without interrupting forms or casino controls.
+      document.querySelectorAll('#walletBalance, .balance-value, [data-current-balance]').forEach(node => {
+        node.textContent = player.balance;
+      });
+      document.querySelectorAll('.moneytree-hero-balance').forEach(node => { node.textContent = formatCurrency(nextBalance); });
+      document.querySelectorAll('.lucky7-wallet-chip strong, .lucky7-inline-balance strong').forEach(node => {
+        node.textContent = formatLucky7Currency(nextBalance);
+      });
+      if (window.__moneytreeState?.dashboardData) window.__moneytreeState.dashboardData.available_balance = nextBalance;
     }
 
     return nextBalance;
@@ -5286,6 +5298,7 @@ async function loadCitizenProfile(knownCitizen = null) {
   }
 
   let privateRecord = null;
+  const balanceVersion = currentBalanceVersion;
   profileState.privateLoadError = null;
 
   try {
@@ -5305,6 +5318,9 @@ async function loadCitizenProfile(knownCitizen = null) {
   }
 
   profileState.citizen = citizen;
+  if (privateRecord && balanceVersion !== currentBalanceVersion && profileState.private?.balance != null) {
+    privateRecord.balance = profileState.private.balance;
+  }
   profileState.private = privateRecord || null;
   void ensureCurrentCitizenHandleStatus();
 
@@ -8184,7 +8200,7 @@ function renderAppContent(appId, mode = 'normal') {
         <section class="profile-section mylife-details-section">
           <div class="profile-section-header"><h3>Personal details</h3></div>
           <div class="profile-detail-list">
-            <div class="profile-detail-item"><span>Account balance</span><strong>${escapeHtml(balanceValue)}</strong></div>
+            <div class="profile-detail-item"><span>Account balance</span><strong data-current-balance>${escapeHtml(balanceValue)}</strong></div>
             <div class="profile-detail-item"><span>Employment status</span><strong>${escapeHtml(profession)}</strong></div>
             <div class="profile-detail-item"><span>Social class</span><strong>${escapeHtml(socialClass)}</strong></div>
             <div class="profile-detail-item"><span>Education</span><strong>${escapeHtml(education)}</strong></div>
@@ -8350,7 +8366,7 @@ function renderAppContent(appId, mode = 'normal') {
                     ([label, value]) => `
                       <div class="mylife-stat-row">
                         <span>${label}</span>
-                        <strong>${value}</strong>
+                        <strong ${label === 'Account balance' ? 'data-current-balance' : ''}>${value}</strong>
                       </div>
                     `,
                   )
@@ -11209,8 +11225,6 @@ function renderAppContent(appId, mode = 'normal') {
           applyCitizenProfile(profileState.citizen);
           renderPlayerDetails();
           await loadCitizenProfile();
-        } else {
-          await refreshCitizenBalanceFromSupabase(targetCitizenId);
         }
 
         renderOwnerBalancePanel();
@@ -12551,6 +12565,7 @@ async function bootstrapAuthSession() {
     }
 
     if (!session) {
+      window.TyrannyLiveBalance?.stop();
       window.TyrannyOnboarding?.stop();
       window.TyrannyNotifications?.stop();
       diagnostics.sessionExists = false;
@@ -12619,6 +12634,7 @@ async function bootstrapAuthSession() {
     authState.initializing = false;
     authState.ready = true;
     window.TyrannyNotifications?.start(profileState.citizen?.id);
+    window.TyrannyLiveBalance?.start(profileState.citizen);
     window.TyrannyOnboarding?.ready(getCitizenTourContext());
   } catch (error) {
     console.error('session handling failed', error);
@@ -12991,6 +13007,7 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        window.TyrannyLiveBalance?.stop();
         authBootstrapEpoch++;
         authBootstrapRequest = null;
         authState.ready = false;
