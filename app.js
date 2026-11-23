@@ -4,7 +4,7 @@ const player = {
   profession: 'Profile unavailable',
   className: 'Profile unavailable',
   education: 'Profile unavailable',
-  party: 'United Front',
+  party: 'Independent',
   balance: 'Loading...',
 };
 
@@ -8076,9 +8076,6 @@ function renderAppContent(appId, mode = 'normal') {
               <span>Political affiliation</span>
               <select name="political_party">
                 <option value="Independent" ${party === 'Independent' ? 'selected' : ''}>Independent</option>
-                <option value="United Front" ${party === 'United Front' ? 'selected' : ''}>United Front</option>
-                <option value="People's Assembly" ${party === "People's Assembly" ? 'selected' : ''}>People's Assembly</option>
-                <option value="Civic Order" ${party === 'Civic Order' ? 'selected' : ''}>Civic Order</option>
               </select>
             </label>
 
