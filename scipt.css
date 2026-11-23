@@ -304,6 +304,13 @@ button {
   .tutorial-article { padding: 18px; }
 }
 
+.phone-push-settings { margin: 8px 0 16px; padding: 14px; border: 1px solid #637da44d; border-radius: 14px; background: #eaf2ff; color: #182b45; }
+.phone-push-settings strong { font-size: 0.85rem; }
+.phone-push-settings p { font-size: 0.75rem; line-height: 1.55; margin: 8px 0; }
+.phone-push-settings button { min-height: 44px; border: 0; border-radius: 10px; padding: 10px 14px; background: #285c96; color: white; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.phone-push-settings button:disabled { opacity: 0.5; cursor: default; }
+.phone-push-settings button:focus-visible { outline: 3px solid #568bd1; outline-offset: 3px; }
+
 .avatar {
   display: inline-grid;
   place-items: center;

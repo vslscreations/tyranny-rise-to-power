@@ -20,6 +20,7 @@ window.TyrannyNotifications = (() => {
     const list = document.getElementById('notificationList');
     if (!list) return;
     list.innerHTML = `
+      <section id="phonePushSettings" class="phone-push-settings" aria-label="Phone notification settings"></section>
       <div class="notification-toolbar">
         <button type="button" data-notice-action="filter" aria-pressed="${state.unreadOnly}">${state.unreadOnly ? 'Unread only' : 'All notifications'}</button>
         <button type="button" data-notice-action="refresh" ${state.loading ? 'disabled' : ''}>Refresh</button>
@@ -43,6 +44,7 @@ window.TyrannyNotifications = (() => {
       </div>
       ${state.hasMore ? `<button type="button" class="notification-more" data-notice-action="more" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Loading…' : 'Load older notifications'}</button>` : ''}
     `;
+    window.TyrannyPush?.render();
   }
 
   async function load(append = false) {
@@ -105,6 +107,7 @@ window.TyrannyNotifications = (() => {
     render();
     document.getElementById('closeNotifications').focus();
     void load();
+    void window.TyrannyPush?.start(state.citizenId);
   }
   function stop() {
     clearInterval(timer); timer = null;
@@ -117,6 +120,7 @@ window.TyrannyNotifications = (() => {
     if (!citizenId) { stop(); return; }
     if (state.citizenId !== citizenId) stop();
     state.citizenId = citizenId;
+    void window.TyrannyPush?.start(citizenId).then(() => window.TyrannyPush.openInbox());
     if (!timer) {
       void load();
       timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);

@@ -12866,6 +12866,7 @@ async function handleLogout() {
   }
 
   try {
+    await window.TyrannyPush?.disable();
     const { error } = await supabase.auth.signOut();
     if (error) {
       setAuthMessage(error.message || 'Logout failed.', 'error');
@@ -12917,6 +12918,7 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        void window.TyrannyPush?.stop();
         moderatorAppState.announcement = { title: '', body: '', preview: false, busy: false, requestId: null, error: '', message: '' };
         window.TyrannyNotifications?.stop();
         notificationMoneytreeTarget = null;
