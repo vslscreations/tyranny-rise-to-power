@@ -17,6 +17,14 @@ const allowedBuiltinAvatarUrls = new Set([
   './assets/avatars/leah-cortez.svg',
   './assets/avatars/omar-tate.svg',
 ]);
+const allowedAvatarBackgrounds = new Set([
+  'midnight',
+  'royal',
+  'crimson',
+  'emerald',
+  'imperial',
+  'violet',
+]);
 
 const allowedOrigins = new Set([
   'http://127.0.0.1:5500',
@@ -198,6 +206,16 @@ serve(async (req) => {
       }, origin);
     }
 
+    const avatarBackground = typeof payload.avatar_background === 'string'
+      ? payload.avatar_background.trim().toLowerCase()
+      : 'midnight';
+
+    if (!allowedAvatarBackgrounds.has(avatarBackground)) {
+      return jsonResponse(400, {
+        error: 'The selected avatar background is not permitted.',
+      }, origin);
+    }
+
     const party = typeof payload.political_party === 'string'
       ? payload.political_party.trim()
       : typeof payload.party === 'string'
@@ -245,6 +263,7 @@ serve(async (req) => {
       p_public_name: publicName,
       p_avatar_type: avatarType,
       p_avatar_url: avatarUrl,
+      p_avatar_background: avatarBackground,
       p_political_party: party,
     });
 

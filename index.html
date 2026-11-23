@@ -140,7 +140,7 @@
                 </div>
                 <button id="notificationToggle" class="notification-button" type="button" aria-label="Open notification center">
                   <span class="bell-icon" aria-hidden="true">🔔</span>
-                  <span class="notification-bubble" id="notificationBubble">3</span>
+                  <span class="notification-bubble" id="notificationBubble" hidden>0</span>
                 </button>
               </div>
 
@@ -213,26 +213,39 @@
                 <div>
                   <span>Avatar</span>
                   <div id="avatarPickerGrid" class="avatar-picker-grid" aria-label="Select built-in avatar">
-                    <button type="button" class="avatar-option selected" data-avatar-url="./assets/avatars/aurelia-voss.svg" aria-label="Aurelia Voss avatar">
-                      <img src="./assets/avatars/aurelia-voss.svg" alt="Aurelia Voss avatar" />
+                    <button type="button" class="avatar-option selected" data-avatar-url="./assets/avatars/aurelia-voss.svg" aria-label="Malik Vale avatar">
+                      <img src="./assets/avatars/hd/malik-vale.png" alt="Malik Vale avatar" />
                     </button>
-                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/jasper-reed.svg" aria-label="Jasper Reed avatar">
-                      <img src="./assets/avatars/jasper-reed.svg" alt="Jasper Reed avatar" />
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/jasper-reed.svg" aria-label="Rafael Cruz avatar">
+                      <img src="./assets/avatars/hd/rafael-cruz.png" alt="Rafael Cruz avatar" />
                     </button>
-                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/mira-sloane.svg" aria-label="Mira Sloane avatar">
-                      <img src="./assets/avatars/mira-sloane.svg" alt="Mira Sloane avatar" />
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/mira-sloane.svg" aria-label="Kaito Mercer avatar">
+                      <img src="./assets/avatars/hd/kaito-mercer.png" alt="Kaito Mercer avatar" />
                     </button>
-                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/dorian-kestrel.svg" aria-label="Dorian Kestrel avatar">
-                      <img src="./assets/avatars/dorian-kestrel.svg" alt="Dorian Kestrel avatar" />
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/dorian-kestrel.svg" aria-label="Amir Knox avatar">
+                      <img src="./assets/avatars/hd/amir-knox.png" alt="Amir Knox avatar" />
                     </button>
-                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/leah-cortez.svg" aria-label="Leah Cortez avatar">
-                      <img src="./assets/avatars/leah-cortez.svg" alt="Leah Cortez avatar" />
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/leah-cortez.svg" aria-label="Nia Laurent avatar">
+                      <img src="./assets/avatars/hd/nia-laurent.png" alt="Nia Laurent avatar" />
                     </button>
-                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/omar-tate.svg" aria-label="Omar Tate avatar">
-                      <img src="./assets/avatars/omar-tate.svg" alt="Omar Tate avatar" />
+                    <button type="button" class="avatar-option" data-avatar-url="./assets/avatars/omar-tate.svg" aria-label="Camila Reyes avatar">
+                      <img src="./assets/avatars/hd/camila-reyes.png" alt="Camila Reyes avatar" />
                     </button>
                   </div>
                   <input id="citizenAvatar" type="hidden" name="avatar" value="./assets/avatars/aurelia-voss.svg" />
+                </div>
+
+                <div>
+                  <span>Avatar background</span>
+                  <div id="avatarBackgroundPicker" class="avatar-background-picker" role="radiogroup" aria-label="Select avatar background color">
+                    <button type="button" class="avatar-background-option selected" data-avatar-background="midnight" role="radio" aria-checked="true" aria-label="Midnight" title="Midnight" style="background-image: linear-gradient(145deg, #17243d 0%, #080c16 72%)"></button>
+                    <button type="button" class="avatar-background-option" data-avatar-background="royal" role="radio" aria-checked="false" aria-label="Royal Blue" title="Royal Blue" style="background-image: linear-gradient(145deg, #2859b8 0%, #101b44 76%)"></button>
+                    <button type="button" class="avatar-background-option" data-avatar-background="crimson" role="radio" aria-checked="false" aria-label="Crimson" title="Crimson" style="background-image: linear-gradient(145deg, #9b263b 0%, #2d0a16 76%)"></button>
+                    <button type="button" class="avatar-background-option" data-avatar-background="emerald" role="radio" aria-checked="false" aria-label="Emerald" title="Emerald" style="background-image: linear-gradient(145deg, #178260 0%, #082a24 76%)"></button>
+                    <button type="button" class="avatar-background-option" data-avatar-background="imperial" role="radio" aria-checked="false" aria-label="Imperial Gold" title="Imperial Gold" style="background-image: linear-gradient(145deg, #b27b2c 0%, #3a2109 76%)"></button>
+                    <button type="button" class="avatar-background-option" data-avatar-background="violet" role="radio" aria-checked="false" aria-label="Violet" title="Violet" style="background-image: linear-gradient(145deg, #7048b7 0%, #25123f 76%)"></button>
+                  </div>
+                  <input id="citizenAvatarBackground" type="hidden" name="avatar_background" value="midnight" />
                 </div>
 
                 <label>
@@ -272,6 +285,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js"></script>
     <script src="./supabase-client.js"></script>
+    <script src="./notifications.js"></script>
+    <script src="./tutorials.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

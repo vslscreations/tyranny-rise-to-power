@@ -21,7 +21,7 @@ BEGIN
   END IF;
   RETURN QUERY
   SELECT c.id, c.public_name, h.handle, c.registration_date,
-         cp.account_status, cp.balance::numeric, cp.profession, cp.education
+         cp.account_status::text, cp.balance::numeric, cp.profession::text, cp.education::text
   FROM public.citizens c
   LEFT JOIN public.citizen_social_handles h ON h.citizen_id = c.id
   LEFT JOIN public.citizen_private cp ON cp.citizen_id = c.id

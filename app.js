@@ -158,14 +158,26 @@ function bindGlobalCitizenProfileActions() {
 
 bindGlobalCitizenProfileActions();
 
+// The stored SVG URLs are stable avatar IDs used by existing citizens and backend
+// allowlists. The HD image is the presentation layer, so upgrading the art does not
+// rewrite existing citizen records or invalidate older clients.
 const builtInAvatarAssets = [
-  { url: './assets/avatars/aurelia-voss.svg', label: 'Aurelia Voss' },
-  { url: './assets/avatars/jasper-reed.svg', label: 'Jasper Reed' },
-  { url: './assets/avatars/mira-sloane.svg', label: 'Mira Sloane' },
-  { url: './assets/avatars/dorian-kestrel.svg', label: 'Dorian Kestrel' },
-  { url: './assets/avatars/leah-cortez.svg', label: 'Leah Cortez' },
-  { url: './assets/avatars/omar-tate.svg', label: 'Omar Tate' },
+  { url: './assets/avatars/aurelia-voss.svg', image: './assets/avatars/hd/malik-vale.png', label: 'Malik Vale' },
+  { url: './assets/avatars/jasper-reed.svg', image: './assets/avatars/hd/rafael-cruz.png', label: 'Rafael Cruz' },
+  { url: './assets/avatars/mira-sloane.svg', image: './assets/avatars/hd/kaito-mercer.png', label: 'Kaito Mercer' },
+  { url: './assets/avatars/dorian-kestrel.svg', image: './assets/avatars/hd/amir-knox.png', label: 'Amir Knox' },
+  { url: './assets/avatars/leah-cortez.svg', image: './assets/avatars/hd/nia-laurent.png', label: 'Nia Laurent' },
+  { url: './assets/avatars/omar-tate.svg', image: './assets/avatars/hd/camila-reyes.png', label: 'Camila Reyes' },
 ];
+
+const AVATAR_BACKGROUNDS = Object.freeze({
+  midnight: { label: 'Midnight', css: 'linear-gradient(145deg, #17243d 0%, #080c16 72%)' },
+  royal: { label: 'Royal Blue', css: 'linear-gradient(145deg, #2859b8 0%, #101b44 76%)' },
+  crimson: { label: 'Crimson', css: 'linear-gradient(145deg, #9b263b 0%, #2d0a16 76%)' },
+  emerald: { label: 'Emerald', css: 'linear-gradient(145deg, #178260 0%, #082a24 76%)' },
+  imperial: { label: 'Imperial Gold', css: 'linear-gradient(145deg, #b27b2c 0%, #3a2109 76%)' },
+  violet: { label: 'Violet', css: 'linear-gradient(145deg, #7048b7 0%, #25123f 76%)' },
+});
 
 const moneytreeContributorNameCache = new Map();
 
@@ -178,6 +190,12 @@ const profileState = {
 };
 
 const appCatalog = {
+  tutorial: {
+    name: 'Tutorial',
+    icon: '📖',
+    color: '#8bbfff',
+    unread: 0,
+  },
   social: {
     name: 'FakeBook',
     icon: './images/icons/socialmedia.PNG',
@@ -253,36 +271,8 @@ const appCatalog = {
   },
 };
 
-const notifications = [
-  {
-    id: 1,
-    title: 'Campaign Victory',
-    detail: 'Your neighborhood charter expanded by 12%.',
-    time: '2 min ago',
-    unread: true,
-  },
-  {
-    id: 2,
-    title: 'Finance Alert',
-    detail: 'Transfer from the treasury cleared successfully.',
-    time: '19 min ago',
-    unread: true,
-  },
-  {
-    id: 3,
-    title: 'City Watch',
-    detail: 'Your influence map was updated overnight.',
-    time: '1 hour ago',
-    unread: false,
-  },
-  {
-    id: 4,
-    title: 'Access Notice',
-    detail: 'Dark Web access key required before you can proceed.',
-    time: '3 hours ago',
-    unread: false,
-  },
-];
+let notificationMoneytreeTarget = null;
+let notificationNewsTarget = null;
 
 const socialState = {
   activeTab: 'associates',
@@ -536,7 +526,8 @@ const moderatorAppState = {
   ownerSearchLoading: false,
   ownerSearchComplete: false,
   ownerSearchRequestToken: 0,
-  citizenDirectory: { query: '', offset: 0, rows: [], hasMore: false, loading: false, error: null, selectedId: null, requestToken: 0 },
+  citizenDirectory: { query: '', offset: 0, rows: [], hasMore: false, loading: false, error: null, selectedId: null, requestToken: 0, deleting: false },
+  announcement: { title: '', body: '', preview: false, busy: false, requestId: null, error: '', message: '' },
   ownerAmount: '',
   ownerReason: '',
   ownerSubmitting: false,
@@ -891,11 +882,25 @@ function getDisplayProfession(value, fallback = 'Profile unavailable') {
 }
 
 function getCitizenAvatarUrl(citizen) {
-  if (citizen?.avatar_url && builtInAvatarAssets.some((option) => option.url === citizen.avatar_url)) {
-    return citizen.avatar_url;
-  }
+  return getSafeAvatarUrl(citizen?.avatar_url);
+}
 
-  return './assets/avatars/aurelia-voss.svg';
+function getCitizenAvatarChoiceUrl(citizen) {
+  const match = builtInAvatarAssets.find((option) => option.url === citizen?.avatar_url || option.image === citizen?.avatar_url);
+  return match?.url || builtInAvatarAssets[0].url;
+}
+
+function getAvatarBackgroundKey(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(AVATAR_BACKGROUNDS, key) ? key : 'midnight';
+}
+
+function getAvatarBackgroundCss(value) {
+  return AVATAR_BACKGROUNDS[getAvatarBackgroundKey(value)].css;
+}
+
+function getAvatarStyle(avatarUrl, backgroundKey) {
+  return `background-image: url('${getSafeAvatarUrl(avatarUrl)}'), ${getAvatarBackgroundCss(backgroundKey)};`;
 }
 
 function formatCurrency(value) {
@@ -914,10 +919,10 @@ function formatCurrency(value) {
 function getAvatarForCitizenName(name) {
   const match = builtInAvatarAssets.find((option) => option.label.toLowerCase() === String(name || '').trim().toLowerCase());
   if (match) {
-    return match.url;
+    return match.image;
   }
 
-  return './assets/avatars/aurelia-voss.svg';
+  return builtInAvatarAssets[0].image;
 }
 
 function formatSocialTimestamp(isoString) {
@@ -961,9 +966,7 @@ function normalizeSocialPostRecord(record) {
   const authorName = author?.public_name ?? record?.author_name ?? record?.author ?? 'Citizen';
   const authorHandleValue = record?.author_handle ?? record?.handle ?? author?.handle ?? null;
   const authorAvatar = author?.avatar_url ?? record?.avatar_url ?? './assets/avatars/aurelia-voss.svg';
-  const resolvedAvatar = builtInAvatarAssets.some((option) => option.url === authorAvatar)
-    ? authorAvatar
-    : './assets/avatars/aurelia-voss.svg';
+  const resolvedAvatar = getSafeAvatarUrl(authorAvatar);
 
   return {
     id: String(record?.id ?? `social-${Date.now()}`),
@@ -971,6 +974,7 @@ function normalizeSocialPostRecord(record) {
     author: String(authorName || 'Citizen'),
     handle: formatSocialHandle(authorHandleValue, '@citizen'),
     avatar: resolvedAvatar,
+    avatarBackground: getAvatarBackgroundKey(record?.avatar_background ?? author?.avatar_background),
     content: String(record?.content ?? ''),
     createdAt: record?.created_at || new Date().toISOString(),
     likes: Number(record?.like_count ?? 0),
@@ -990,9 +994,7 @@ function normalizeInboxConversation(record) {
   const partnerAvatar = typeof record?.other_avatar_url === 'string' && record.other_avatar_url.trim()
     ? record.other_avatar_url.trim()
     : './assets/avatars/aurelia-voss.svg';
-  const resolvedAvatar = builtInAvatarAssets.some((option) => option.url === partnerAvatar)
-    ? partnerAvatar
-    : './assets/avatars/aurelia-voss.svg';
+  const resolvedAvatar = getSafeAvatarUrl(partnerAvatar);
 
   return {
     threadId: record?.thread_id ?? null,
@@ -1417,7 +1419,7 @@ function renderAssociatesApp() {
   const associateMarkup = visibleAssociates.length
       ? visibleAssociates.map((associate) => `
           <button type="button" class="associate-item" data-social-action="open-citizen-profile" data-citizen-id="${escapeHtml(String(associate.citizenId || ''))}">
-            <div class="associate-avatar" style="background-image: url('${escapeHtml(associate.avatarUrl || './assets/avatars/aurelia-voss.svg')}')"></div>
+            <div class="associate-avatar" style="${getAvatarStyle(associate.avatarUrl, associate.avatarBackground)}"></div>
             <div class="associate-copy">
               <strong>${escapeHtml(associate.publicName || 'Citizen')}</strong>
               <span>${escapeHtml(associate.handle || '@citizen')}</span>
@@ -1485,9 +1487,7 @@ function renderMessagesApp() {
   const currentCitizenId = profileState?.citizen?.id ?? null;
 
   if (messagesState.activeThreadId) {
-    const partnerAvatar = builtInAvatarAssets.some((option) => option.url === messagesState.activePartnerAvatar)
-      ? messagesState.activePartnerAvatar
-      : './assets/avatars/aurelia-voss.svg';
+    const partnerAvatar = getSafeAvatarUrl(messagesState.activePartnerAvatar);
 
     const historyMarkup = messagesState.historyLoading
       ? '<div class="mylife-alert"><span>Loading</span><p>Loading conversation…</p></div>'
@@ -1539,7 +1539,7 @@ function renderMessagesApp() {
         <div class="messages-header-row">
           <button type="button" class="secondary-button message-back-button" data-action="back-to-inbox">‹ <span>Messages</span></button>
           <div class="messages-conversation-header">
-            <div class="message-thread-avatar" style="background-image: url('${escapeHtml(partnerAvatar)}')"></div>
+            <div class="message-thread-avatar" style="${getAvatarStyle(partnerAvatar, messagesState.activePartnerAvatarBackground)}"></div>
             <div>
               <h3>${escapeHtml(messagesState.activePartnerName)}</h3>
             </div>
@@ -1619,7 +1619,7 @@ function renderMessagesApp() {
       <div class="messages-list">
         ${messagesState.items.length > 0 ? messagesState.items.map((conversation) => `
           <button type="button" class="message-thread-item message-thread-button" data-action="open-message-thread" data-thread-id="${escapeHtml(String(conversation.threadId ?? ''))}">
-            <div class="message-thread-avatar" style="background-image: url('${escapeHtml(conversation.avatar)}')"></div>
+            <div class="message-thread-avatar" style="${getAvatarStyle(conversation.avatar, conversation.avatarBackground)}"></div>
             <div class="message-thread-copy">
               <div class="message-thread-meta">
                 <strong>${escapeHtml(conversation.partnerName)}</strong>
@@ -1934,9 +1934,11 @@ async function loadSocialProfileView(targetCitizenId, moneytreeAuthorButton = nu
       throw new Error('You must be signed in to view this citizen profile.');
     }
 
-    const { data, error } = await supabase.rpc('get_citizen_social_profile', {
-      p_citizen_id: normalizedCitizenId,
-    });
+    const [profileResult, avatarStyleResult] = await Promise.all([
+      supabase.rpc('get_citizen_social_profile', { p_citizen_id: normalizedCitizenId }),
+      supabase.rpc('get_public_avatar_style', { p_citizen_id: normalizedCitizenId }),
+    ]);
+    const { data, error } = profileResult;
 
     if (requestToken !== Number(socialState.profileView?.requestToken || 0)) {
       return;
@@ -1944,6 +1946,10 @@ async function loadSocialProfileView(targetCitizenId, moneytreeAuthorButton = nu
 
     if (error) {
       throw error;
+    }
+
+    if (avatarStyleResult.error) {
+      console.warn('public avatar style lookup failed', avatarStyleResult.error);
     }
 
     const profileRow = Array.isArray(data) ? (data[0] ?? null) : (data ?? null);
@@ -1971,6 +1977,9 @@ async function loadSocialProfileView(targetCitizenId, moneytreeAuthorButton = nu
       error: null,
       data: {
         ...profileRow,
+        avatar_background: Array.isArray(avatarStyleResult.data)
+          ? avatarStyleResult.data[0]?.avatar_background
+          : avatarStyleResult.data?.avatar_background,
         relationship_type: relationshipStatus,
         posts: normalizedProfilePosts,
       },
@@ -1994,15 +2003,10 @@ async function loadSocialProfileView(targetCitizenId, moneytreeAuthorButton = nu
 
 function getSafeAvatarUrl(url, fallback = './assets/avatars/aurelia-voss.svg') {
   const candidate = String(url || '').trim();
-  if (!candidate) {
-    return fallback;
-  }
-
-  if (builtInAvatarAssets.some((option) => option.url === candidate)) {
-    return candidate;
-  }
-
-  return fallback;
+  const match = builtInAvatarAssets.find((option) => option.url === candidate || option.image === candidate);
+  if (match) return match.image;
+  const fallbackMatch = builtInAvatarAssets.find((option) => option.url === fallback || option.image === fallback);
+  return fallbackMatch?.image || builtInAvatarAssets[0].image;
 }
 
 function normalizeAssociateListRecord(record) {
@@ -3058,6 +3062,7 @@ function renderSocialApp() {
       ? '@citizen'
       : formatSocialHandle(profileView.data?.handle || '@citizen', '@citizen');
     const profileAvatarUrl = getSafeAvatarUrl(profileView.data?.avatar_url || './assets/avatars/aurelia-voss.svg');
+    const profileAvatarBackground = getAvatarBackgroundKey(profileView.data?.avatar_background);
     const profilePosts = Array.isArray(profileView.data?.posts) ? profileView.data.posts : [];
     const registrationDate = profileView.data?.registration_date
       ? new Date(profileView.data.registration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -3163,7 +3168,7 @@ function renderSocialApp() {
                           aria-label="Open ${escapeHtml(post.author)}'s profile"
                           style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
                         >
-                          <div class="social-post-avatar" style="background-image: url('${escapeHtml(post.avatar)}')"></div>
+                          <div class="social-post-avatar" style="${getAvatarStyle(post.avatar, post.avatarBackground)}"></div>
                           <div>
                             <strong>${escapeHtml(post.author)}</strong>
                             <span>${escapeHtml(post.handle)} · <time datetime="${escapeHtml(post.createdAt)}">${escapeHtml(formatSocialTimestamp(post.createdAt))}</time></span>
@@ -3210,7 +3215,7 @@ function renderSocialApp() {
 
           <div class="profile-avatar-wrap">
             <div class="profile-avatar-ring">
-              <div class="profile-avatar-photo" style="background-image: url('${escapeHtml(profileAvatarUrl)}')"></div>
+              <div class="profile-avatar-photo" style="${getAvatarStyle(profileAvatarUrl, profileAvatarBackground)}"></div>
             </div>
           </div>
 
@@ -3244,10 +3249,7 @@ function renderSocialApp() {
   }
 
   const currentUserHandle = socialState.currentCitizenHandle || formatSocialHandle(profileState.citizen?.handle || '@citizen', '@citizen');
-  const rawCurrentUserAvatar = getCitizenAvatarUrl(profileState.citizen || null);
-  const currentUserAvatar = rawCurrentUserAvatar && builtInAvatarAssets.some((option) => option.url === rawCurrentUserAvatar)
-    ? rawCurrentUserAvatar
-    : './assets/avatars/aurelia-voss.svg';
+  const currentUserAvatar = getCitizenAvatarUrl(profileState.citizen || null);
   const visiblePosts = getVisibleSocialPosts();
   const commentsPanelOpen = Boolean(socialState.commentsPanelOpen && socialState.selectedCommentPostId);
   const selectedCommentPost = commentsPanelOpen
@@ -3350,7 +3352,7 @@ function renderSocialApp() {
                 aria-label="Open ${postHandle}'s profile"
                 style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
               >
-                <div class="social-post-avatar" style="background-image: url('${postAvatar}')"></div>
+                <div class="social-post-avatar" style="${getAvatarStyle(postAvatar, post.isCurrentUser ? profileState.citizen?.avatar_background : post.avatarBackground)}"></div>
                 <div>
                   <strong>${postHandle}</strong>
                   <span>${escapeHtml(formatSocialTimestamp(post.createdAt))}</span>
@@ -3503,7 +3505,7 @@ function renderSocialApp() {
       </header>
 
       <div class="social-profile-card">
-        <div class="social-avatar" style="background-image: url('${escapeHtml(currentUserAvatar)}')"></div>
+        <div class="social-avatar" style="${getAvatarStyle(currentUserAvatar, profileState.citizen?.avatar_background)}"></div>
         <div class="social-profile-copy">
           <strong>${escapeHtml(currentUserHandle)}</strong>
           <span>Public profile</span>
@@ -3670,7 +3672,7 @@ function renderSocialApp() {
                                     aria-label="Open ${escapeHtml(commentHandle)}'s profile"
                                     style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
                                   >
-                                    <div class="social-comment-avatar" style="background-image: url('${escapeHtml(commentAvatarUrl)}')"></div>
+                                    <div class="social-comment-avatar" style="${getAvatarStyle(commentAvatarUrl, comment.avatar_background)}"></div>
                                     <div>
                                       <strong>${escapeHtml(commentHandle)}</strong>
                                       <span>${escapeHtml(createdAt)}</span>
@@ -3721,7 +3723,7 @@ function renderSocialApp() {
                                   aria-label="Open ${escapeHtml(commentHandle)}'s profile"
                                   style="background: none; border: none; color: inherit; text-align: left; padding: 0; cursor: pointer;"
                                 >
-                                  <div class="social-comment-avatar" style="background-image: url('${escapeHtml(commentAvatarUrl)}')"></div>
+                                  <div class="social-comment-avatar" style="${getAvatarStyle(commentAvatarUrl, comment.avatar_background)}"></div>
                                   <div>
                                     <strong>${escapeHtml(commentHandle)}</strong>
                                     <span>${escapeHtml(createdAt)}</span>
@@ -4928,7 +4930,7 @@ function renderPlayerDetails() {
 
   document.querySelectorAll('.avatar').forEach((avatar) => {
     if (activeAvatarUrl) {
-      avatar.style.backgroundImage = `linear-gradient(135deg, rgba(18, 24, 28, 0.15), rgba(18, 24, 28, 0.05)), url("${activeAvatarUrl}")`;
+      avatar.style.backgroundImage = `url("${activeAvatarUrl}"), ${getAvatarBackgroundCss(profileState.citizen?.avatar_background)}`;
       avatar.textContent = '';
     } else {
       avatar.style.backgroundImage = '';
@@ -5075,20 +5077,73 @@ async function refreshModeratorAppVisibility() {
 }
 
 function renderNotificationCenter() {
-  const unreadCount = notifications.filter((item) => item.unread).length;
-  notificationBubble.textContent = String(unreadCount);
+  window.TyrannyNotifications?.render();
+}
 
-  notificationList.innerHTML = notifications
-    .map(
-      (item) => `
-        <article class="notification-item ${item.unread ? 'unread' : ''}">
-          <strong>${item.title}</strong>
-          <span>${item.detail}</span>
-          <small>${item.time}</small>
-        </article>
-      `,
-    )
-    .join('');
+async function openGameNotificationTarget(item) {
+  const refreshApp = (id) => {
+    const existing = document.getElementById('app-' + id);
+    if (existing) existing.dataset.initialized = '';
+    openApp(id);
+  };
+  if (item.target === 'moneytree') {
+    notificationMoneytreeTarget = item.target_id ? item : null;
+    refreshApp('moneytree');
+  } else if (item.target === 'profile') {
+    openApp('social');
+    await loadSocialProfileView(item.target_id);
+  } else if (item.target === 'social' && item.target_id) {
+    const { data, error } = await getAuthClient().rpc('get_notification_social_post', { p_id: item.target_id });
+    if (error || !data) throw error || new Error('Post unavailable');
+    socialState.activeTab = 'latest';
+    socialState.profileView.active = false;
+    socialState.chat.open = false;
+    openApp('social');
+    socialState.feedRequestToken++;
+    socialState.loading = false;
+    socialState.error = null;
+    socialState.posts = [normalizeSocialPostRecord(data)];
+    socialState.selectedCommentPostId = item.target_id;
+    socialState.commentsPanelOpen = true;
+    renderSocialApp();
+    await loadCommentsForPost(item.target_id);
+  } else if (item.target === 'chat') {
+    socialState.profileView.active = false;
+    socialState.chat.open = true;
+    refreshApp('social');
+  } else if (item.target === 'messages') {
+    openApp('messages');
+    const inbox = await loadMessagesInbox();
+    const conversation = inbox.find(row => row.threadId === item.target_id);
+    if (conversation) openMessageThread(conversation);
+    else if (item.payload?.partner_id) openMessageThread({
+      threadId: item.target_id, partnerCitizenId: item.payload.partner_id, partnerName: 'Citizen',
+    });
+    else throw new Error('Conversation unavailable');
+  } else if (item.target === 'localnews') {
+    notificationNewsTarget = item.target_id;
+    localNewsState.activeArticleId = item.target_id;
+    localNewsState.detailOpen = true;
+    localNewsState.articles = [];
+    refreshApp('localnews');
+  } else if (item.target === 'store') {
+    openApp('store');
+    await loadStoreCatalog();
+    if (!storeState.catalog.some(product => product.id === item.target_id)) throw new Error('Product unavailable');
+    storeState.selectedProductId = item.target_id;
+    storeState.confirmationProductId = null;
+    storeState.quote = null;
+    renderStoreApp();
+  } else if (item.target === 'voting') {
+    refreshApp('voting');
+  } else if (item.target === 'mylife') {
+    await loadCitizenProfile();
+    refreshApp('mylife');
+  } else if (item.target === 'lucky7') {
+    refreshApp('lucky7');
+  } else {
+    refreshApp('social');
+  }
 }
 
 function setClock() {
@@ -5158,7 +5213,7 @@ async function loadCitizenProfile() {
 
   const { data: citizen, error: citizenError } = await supabase
     .from('citizens')
-    .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, political_party, registration_date, created_at')
+    .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, avatar_background, political_party, registration_date, created_at')
     .eq('auth_user_id', session.user.id)
     .maybeSingle();
 
@@ -5222,8 +5277,9 @@ async function handleProfileEditSubmit(event) {
   }
 
   const form = event.currentTarget;
-  const politicalParty = form.political_party.value;
-  const avatarUrl = form.avatar_url.value || getCitizenAvatarUrl(profileState.citizen);
+  const politicalParty = form.elements.namedItem('political_party')?.value || profileState.citizen.political_party || 'Independent';
+  const avatarUrl = form.elements.namedItem('avatar_url')?.value || getCitizenAvatarChoiceUrl(profileState.citizen);
+  const avatarBackground = getAvatarBackgroundKey(form.elements.namedItem('avatar_background')?.value);
 
   if (!builtInAvatarAssets.some((asset) => asset.url === avatarUrl)) {
     setAuthMessage('Please select a valid built-in avatar.', 'error');
@@ -5234,6 +5290,7 @@ async function handleProfileEditSubmit(event) {
     .from('citizens')
     .update({
       avatar_url: avatarUrl,
+      avatar_background: avatarBackground,
       political_party: politicalParty,
     })
     .eq('id', profileState.citizen.id);
@@ -5274,9 +5331,6 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     image: './assets/asset-map/laptop.png',
     layer: 'laptop',
     backendProductKey: 'laptop',
-    storeDisplayName: 'Criminal Handbook',
-    storeDisplayDescription: 'Gives the average citizen tips on how to become a criminal. Buy at your own risk!!! You might just end up in jail.',
-    storeDisplayImage: './assets/asset-map/criminal-handbook.png',
   },
   high_school_diploma: {
     productKey: 'high_school_diploma',
@@ -5292,7 +5346,7 @@ const FRONTEND_PRODUCT_CONFIG = Object.freeze({
     description: 'Gives the average citizen tips on how to become a criminal. Buy at your own risk!!! You might just end up in jail.',
     image: './assets/asset-map/criminal-handbook.png',
     layer: 'handbook',
-    backendProductKey: 'laptop',
+    backendProductKey: 'criminal_handbook',
   },
 });
 
@@ -5319,27 +5373,12 @@ function getAssetMapItem(productKey) {
 }
 
 function getAssetMapStoreProductKey(productKey) {
-  if (productKey === 'criminal_handbook') {
-    return 'laptop';
-  }
-  if (productKey === 'laptop') {
-    return 'laptop';
-  }
-  return productKey;
+  return FRONTEND_PRODUCT_CONFIG[productKey]?.backendProductKey || productKey;
 }
 
 function getStoreProductDisplayMeta(product) {
   const productKey = product?.product_key || null;
   const config = FRONTEND_PRODUCT_CONFIG[productKey] || null;
-
-  if (productKey === 'laptop') {
-    return {
-      name: FRONTEND_PRODUCT_CONFIG.laptop.storeDisplayName,
-      description: FRONTEND_PRODUCT_CONFIG.laptop.storeDisplayDescription,
-      image: FRONTEND_PRODUCT_CONFIG.laptop.storeDisplayImage,
-      backendProductKey: 'laptop',
-    };
-  }
 
   if (config) {
     return {
@@ -5358,13 +5397,45 @@ function getStoreProductDisplayMeta(product) {
   };
 }
 
+// Missing assets get a display-only listing, never a substitute backend ID.
+function getStoreProducts() {
+  const products = [...storeState.catalog];
+  for (const config of Object.values(FRONTEND_PRODUCT_CONFIG)) {
+    if (!products.some((product) => product.product_key === config.backendProductKey)) {
+      products.push({
+        id: 'preview:' + config.productKey,
+        product_key: config.productKey,
+        product_name: config.name,
+        category_id: 'frontend-assets',
+        price: null,
+        is_visible: true,
+        is_purchasable: false,
+        is_locked: false,
+        frontendOnly: true,
+      });
+    }
+  }
+  return products;
+}
+
+function getStoreCategories() {
+  return [...storeState.categories, {
+    id: 'frontend-assets', category_key: 'frontend-assets', display_name: 'Upcoming assets',
+    is_visible: true, is_locked: false,
+  }];
+}
+
+function isStorePriceTbd(product) {
+  return ['basic_home', 'basic_vehicle'].includes(product?.product_key) || product?.price == null;
+}
+
 function isAssetMapItemOwned(productKey) {
   return assetMapState.ownedProductKeys.has(productKey);
 }
 
 function getAssetMapAvailability(product) {
   if (!product) {
-    return { label: 'Not yet in Store', canVisitStore: true, tone: 'pending' };
+    return { label: 'Coming soon', canVisitStore: true, tone: 'pending' };
   }
 
   if (!product.is_visible) {
@@ -5391,20 +5462,15 @@ function getAssetMapStatus(item) {
     return { label: 'Owned', tone: 'owned', canVisitStore: false };
   }
   const mappedProductKey = getAssetMapStoreProductKey(item.productKey);
+  if (['basic_home', 'basic_vehicle'].includes(item.productKey)) {
+    return { label: 'Price TBD', canVisitStore: true, tone: 'pending' };
+  }
   return getAssetMapAvailability(assetMapState.catalogByKey.get(mappedProductKey) || assetMapState.catalogByKey.get(item.productKey) || null);
 }
 
 function renderAssetMapPageMarkup() {
   const selectedItem = getAssetMapItem(assetMapState.selectedAssetKey) || null;
-  const selectedProductKey = selectedItem ? getAssetMapStoreProductKey(selectedItem.productKey) : null;
-  const selectedProduct = selectedItem ? assetMapState.catalogByKey.get(selectedProductKey) || assetMapState.catalogByKey.get(selectedItem.productKey) || null : null;
   const selectedStatus = selectedItem ? getAssetMapStatus(selectedItem) : null;
-  const imageByLayer = {
-    vehicle: './assets/asset-map/basic-vehicle.png',
-    laptop: './assets/asset-map/laptop.png',
-    diploma: './assets/asset-map/high-school-diploma.png',
-    handbook: './assets/asset-map/criminal-handbook.png',
-  };
 
   const sceneLayers = ASSET_MAP_ITEMS.map((item) => {
     const owned = isAssetMapItemOwned(item.productKey);
@@ -5413,14 +5479,14 @@ function renderAssetMapPageMarkup() {
     if (item.layer === 'house') {
       return `
         <button type="button" class="asset-map-hotspot asset-map-hotspot--house ${owned ? 'is-owned' : 'is-unowned'}" data-asset-map-key="${item.productKey}" aria-label="${escapeHtml(item.name)}, ${escapeHtml(status.label)}">
-          <img class="asset-map-layer asset-map-layer--house" src="./assets/asset-map/house-background.png" alt="" />
+          <img class="asset-map-layer asset-map-layer--house" src="${item.image}" alt="" />
         </button>
       `;
     }
 
     return `
       <button type="button" class="asset-map-hotspot asset-map-hotspot--${item.layer} ${owned ? 'is-owned' : 'is-unowned'}" data-asset-map-key="${item.productKey}" aria-label="${escapeHtml(item.name)}, ${escapeHtml(status.label)}">
-        <img class="asset-map-layer asset-map-layer--${item.layer}" src="${imageByLayer[item.layer]}" alt="" />
+        <img class="asset-map-layer asset-map-layer--${item.layer}" src="${item.image}" alt="" />
       </button>
     `;
   }).join('');
@@ -5430,18 +5496,14 @@ function renderAssetMapPageMarkup() {
       <div>
         <span class="asset-map-detail-eyebrow">${isAssetMapItemOwned(selectedItem.productKey) ? 'Your asset' : 'Asset details'}</span>
         <h3>${escapeHtml(selectedItem.name)}</h3>
-        <p>${escapeHtml(selectedProduct?.description || selectedItem.description)}</p>
+        <p>${escapeHtml(selectedItem.description)}</p>
       </div>
       <div class="asset-map-detail-footer">
         <span class="asset-map-status ${selectedStatus.tone}">${escapeHtml(selectedStatus.label)}</span>
-        ${!isAssetMapItemOwned(selectedItem.productKey) && selectedStatus.canVisitStore ? `<button type="button" class="asset-map-store-button" data-asset-map-store="${selectedItem.productKey}">View in Store</button>` : ''}
+        <button type="button" class="asset-map-store-button" data-asset-map-store="${selectedItem.productKey}">View in Store</button>
       </div>
     </section>
-  ` : `
-    <section class="asset-map-detail asset-map-detail--hint" aria-live="polite">
-      <p>Tap an item in the scene to view its ownership and Store status.</p>
-    </section>
-  `;
+  ` : '';
 
   return `
     <main class="asset-map-page">
@@ -5453,7 +5515,7 @@ function renderAssetMapPageMarkup() {
         </div>
         <button type="button" class="asset-map-refresh" data-asset-map-refresh aria-label="Refresh Asset Map">↻</button>
       </header>
-      <p class="asset-map-intro">Your assets brighten as you acquire them. There is no purchase path here—each item follows its own Store availability.</p>
+      <p class="asset-map-intro">Your assets brighten as you acquire them. Tap an item in the scene to view its ownership and Store status.</p>
       ${assetMapState.error ? `<div class="asset-map-message"><strong>Map data unavailable</strong><p>${escapeHtml(assetMapState.error)}</p></div>` : ''}
       <section class="asset-map-scene ${assetMapState.loading ? 'is-loading' : ''}" aria-label="Interactive Asset Map">
         ${sceneLayers}
@@ -5513,31 +5575,28 @@ function bindAssetMapControls(root = document) {
 }
 
 function renderAssetMapApp() {
-  const body = document.querySelector('#app-assetmap .app-body');
-  if (!body) {
-    return;
+  for (const body of document.querySelectorAll('#app-assetmap .app-body, #app-mylife .app-body:has(.asset-map-page)')) {
+    body.innerHTML = renderAssetMapPageMarkup();
+    bindAssetMapControls(body);
   }
-
-  body.innerHTML = renderAssetMapPageMarkup();
-  bindAssetMapControls(body);
 }
 
-function openAssetMapStore(productKey) {
+let assetMapStoreNavigationToken = 0;
+async function openAssetMapStore(productKey) {
+  const token = ++assetMapStoreNavigationToken;
   const resolvedKey = getAssetMapStoreProductKey(productKey);
-  const product = assetMapState.catalogByKey.get(resolvedKey) || assetMapState.catalogByKey.get(productKey);
   openApp('store');
-  if (product?.id) {
-    storeState.selectedProductId = product.id;
-    storeState.quote = null;
-  } else {
-    storeState.selectedProductId = null;
-    storeState.quote = null;
-  }
   if (!storeState.hasLoaded) {
-    void loadStoreCatalog();
-  } else {
-    renderStoreApp();
+    await loadStoreCatalog();
   }
+  if (token !== assetMapStoreNavigationToken) return;
+  const product = getStoreProducts().find((entry) => entry.product_key === resolvedKey);
+  storeState.selectedCategory = 'all';
+  storeState.searchTerm = '';
+  storeState.confirmationProductId = null;
+  storeState.selectedProductId = product?.id || null;
+  storeState.quote = null;
+  renderStoreApp();
 }
 
 async function loadAssetMapData() {
@@ -5600,6 +5659,8 @@ function getStoreProductStatus(product) {
   if (!product || !product.is_visible) {
     return { label: 'Unavailable', tone: 'locked' };
   }
+  if (product.frontendOnly) return { label: 'Coming Soon', tone: 'locked' };
+  if (['basic_home', 'basic_vehicle'].includes(product.product_key)) return { label: 'Price TBD', tone: 'locked' };
 
   if (product.is_locked) {
     return { label: 'Coming Soon', tone: 'locked' };
@@ -5662,6 +5723,12 @@ function getStoreEligibilityStatus(product, quote = null) {
 }
 
 function getStoreCheckoutDisabledReason(product, quote = null) {
+  if (product?.frontendOnly || String(product?.id || '').startsWith('preview:')) {
+    return 'Coming soon. This item is not configured for purchase.';
+  }
+  if (['basic_home', 'basic_vehicle'].includes(product?.product_key)) {
+    return 'Price TBD. This item is not available for purchase yet.';
+  }
   if (!product || !product.is_visible || product.is_locked || !product.is_purchasable) {
     return 'This item is unavailable for purchase.';
   }
@@ -5782,16 +5849,16 @@ function renderStoreDetailModal(product) {
     return '';
   }
 
-  const category = storeState.categories.find((entry) => entry.id === product.category_id) || null;
+  const category = getStoreCategories().find((entry) => entry.id === product.category_id) || null;
   const categoryName = category?.display_name || 'Store';
   const productStatus = getStoreProductStatus(product);
   const requirementText = getStoreRequirementLabel(product);
   const quote = storeState.quote && storeState.quote.product_id === product.id ? storeState.quote : null;
   const eligibility = getStoreEligibilityStatus(product, quote);
   const checkoutDisabledReason = getStoreCheckoutDisabledReason(product, quote);
-  const isConfirmationReady = storeState.confirmationProductId === product.id && !storeState.isCheckoutBusy;
+  const isConfirmationReady = storeState.confirmationProductId === product.id && !storeState.isCheckoutBusy && !checkoutDisabledReason;
   const displayMeta = getStoreProductDisplayMeta(product);
-  const quotePriceText = quote && quote.item_price != null ? formatCurrency(Number(quote.item_price)) : product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price TBD';
+  const quotePriceText = isStorePriceTbd(product) ? 'Price TBD' : quote && quote.item_price != null ? formatCurrency(Number(quote.item_price)) : formatCurrency(Number(product.price));
   const quoteTaxRateText = quote && quote.tax_rate != null ? `${Number(quote.tax_rate * 100).toFixed(2)}%` : '—';
   const quoteTaxAmountText = quote && quote.tax_amount != null ? formatCurrency(Number(quote.tax_amount)) : '—';
   const quoteFinalTotalText = quote && quote.final_total != null ? formatCurrency(Number(quote.final_total)) : '—';
@@ -5809,7 +5876,7 @@ function renderStoreDetailModal(product) {
 
   return `
     <div class="store-modal-backdrop" data-store-modal-backdrop="true">
-      <div class="store-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(product.product_name)} details">
+      <div class="store-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(displayMeta.name)} details">
         <button type="button" class="store-modal-close" data-store-modal-close aria-label="Close product details">×</button>
           <div class="store-modal-art" aria-hidden="true">${displayMeta.image ? `<img src="${displayMeta.image}" alt="${escapeHtml(displayMeta.name)}" />` : escapeHtml((displayMeta.name || 'ST').slice(0, 2).toUpperCase())}</div>
         <div class="store-modal-header">
@@ -5846,9 +5913,9 @@ const STORE_PRIORITY_PRODUCT_KEYS = new Map([
 ]);
 
 function renderStoreApp() {
-  const categoryMap = new Map(storeState.categories.map((category) => [category.id, category]));
+  const categoryMap = new Map(getStoreCategories().map((category) => [category.id, category]));
   const searchQuery = String(storeState.searchTerm || '').trim().toLowerCase();
-  const filteredCatalog = storeState.catalog
+  const filteredCatalog = getStoreProducts()
     .map((product) => ({
       product,
       displayMeta: getStoreProductDisplayMeta(product),
@@ -5878,7 +5945,7 @@ function renderStoreApp() {
       return (firstEntry.displayMeta.name || '').localeCompare(secondEntry.displayMeta.name || '', undefined, { sensitivity: 'base' });
     });
 
-  const categoryButtons = storeState.categories
+  const categoryButtons = getStoreCategories()
     .filter((category) => category.is_visible)
     .map((category) => {
       const isSelected = storeState.selectedCategory === category.category_key;
@@ -5903,7 +5970,7 @@ function renderStoreApp() {
       const category = categoryMap.get(product.category_id);
       const status = getStoreProductStatus(product);
       const requirementText = getStoreRequirementLabel(product);
-      const priceText = product.price !== null && product.price !== undefined ? formatCurrency(Number(product.price)) : 'Price TBD';
+      const priceText = isStorePriceTbd(product) ? 'Price TBD' : formatCurrency(Number(product.price));
       const artImage = displayMeta.image ? `<img src="${displayMeta.image}" alt="${escapeHtml(displayMeta.name)}" />` : `<span>${escapeHtml((displayMeta.name || 'ST').split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('').slice(0, 2) || 'ST')}</span>`;
 
       return `
@@ -5931,7 +5998,7 @@ function renderStoreApp() {
     .join('');
 
   const storeModalMarkup = storeState.selectedProductId
-    ? renderStoreDetailModal(storeState.catalog.find((entry) => entry.id === storeState.selectedProductId) || null)
+    ? renderStoreDetailModal(getStoreProducts().find((entry) => entry.id === storeState.selectedProductId) || null)
     : '';
 
   const appBody = document.querySelector('#app-store .app-body');
@@ -6042,8 +6109,8 @@ function renderStoreApp() {
       storeState.quote = null;
       renderStoreApp();
 
-      const product = storeState.catalog.find((entry) => entry.id === productId);
-      if (product && product.is_visible && !product.is_locked && product.is_purchasable) {
+      const product = getStoreProducts().find((entry) => entry.id === productId);
+      if (product && !product.frontendOnly && product.is_visible && !product.is_locked && product.is_purchasable && !isStorePriceTbd(product)) {
         await loadStoreQuote(productId, 1);
         renderStoreApp();
       }
@@ -6171,6 +6238,8 @@ async function loadStoreTaxConfig() {
 }
 
 async function loadStoreQuote(productId, quantity = 1) {
+  const product = getStoreProducts().find((entry) => entry.id === productId);
+  if (!product || product.frontendOnly || !product.is_visible || product.is_locked || !product.is_purchasable || isStorePriceTbd(product)) return null;
   const supabase = getAuthClient();
   const session = (await supabase?.auth.getSession())?.data?.session;
 
@@ -6350,7 +6419,15 @@ async function handleStorePurchase(productId) {
   }
 }
 
-async function loadStoreCatalog() {
+let storeCatalogLoadPromise = null;
+function loadStoreCatalog() {
+  if (!storeCatalogLoadPromise) {
+    storeCatalogLoadPromise = fetchStoreCatalog().finally(() => { storeCatalogLoadPromise = null; });
+  }
+  return storeCatalogLoadPromise;
+}
+
+async function fetchStoreCatalog() {
   const supabase = getAuthClient();
   const session = (await supabase?.auth.getSession())?.data?.session;
 
@@ -6391,6 +6468,7 @@ async function loadStoreCatalog() {
 
     const categoryMap = new Map((categories || []).map((category) => [category.id, category]));
     const visibleCatalog = (catalog || [])
+      .filter((product) => product.product_key !== 'tablet')
       .filter((product) => categoryMap.has(product.category_id))
       .sort((first, second) => {
         const firstRank = STORE_PRIORITY_PRODUCT_KEYS.has(first.product_key)
@@ -7841,6 +7919,15 @@ function renderAppContent(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
   const body = appWindow.querySelector('.app-body');
 
+  if (appId === 'tutorial') {
+    window.TyrannyTutorial.render(body, {
+      catalog: appCatalog,
+      canModerate: moderatorAppState.visible,
+      openApp: (target) => openApp(target, appCatalog[target]?.locked ? 'locked' : 'normal'),
+    });
+    return;
+  }
+
   if (appId === 'social') {
     renderSocialApp();
     ensureCurrentCitizenHandleStatus();
@@ -7872,6 +7959,8 @@ function renderAppContent(appId, mode = 'normal') {
     const citizen = profileState.citizen || {};
     const privateRecord = profileState.private || {};
     const avatarUrl = getCitizenAvatarUrl(citizen);
+    const avatarChoiceUrl = getCitizenAvatarChoiceUrl(citizen);
+    const avatarBackground = getAvatarBackgroundKey(citizen.avatar_background);
     const displayName = citizen.public_name || player.name;
     const party = citizen.political_party || player.party;
     const profession = getDisplayProfession(privateRecord.profession, 'Profile unavailable');
@@ -7886,10 +7975,10 @@ function renderAppContent(appId, mode = 'normal') {
     if (profileState.isEditing) {
       const options = builtInAvatarAssets
         .map((option) => {
-          const selected = option.url === avatarUrl ? 'selected' : '';
+          const selected = option.url === avatarChoiceUrl ? 'selected' : '';
           return `
             <button type="button" class="avatar-option ${selected}" data-avatar-url="${option.url}">
-              <img src="${option.url}" alt="${option.label}" />
+              <img src="${option.image}" alt="${option.label}" style="background-image: ${getAvatarBackgroundCss(avatarBackground)}" />
               <span>${option.label}</span>
             </button>
           `;
@@ -7923,11 +8012,21 @@ function renderAppContent(appId, mode = 'normal') {
               </select>
             </label>
 
-            <input type="hidden" name="avatar_url" value="${avatarUrl}" />
+            <input type="hidden" name="avatar_url" value="${avatarChoiceUrl}" />
+            <input type="hidden" name="avatar_background" value="${avatarBackground}" />
 
             <div class="field-group">
-              <span>Avatar</span>
+              <span>Choose your avatar</span>
               <div class="avatar-picker-grid">${options}</div>
+            </div>
+
+            <div class="field-group">
+              <span>Choose a background</span>
+              <div class="avatar-background-picker" role="radiogroup" aria-label="Avatar background color">
+                ${Object.entries(AVATAR_BACKGROUNDS).map(([key, option]) => `
+                  <button type="button" class="avatar-background-option ${key === avatarBackground ? 'selected' : ''}" data-avatar-background="${key}" role="radio" aria-checked="${key === avatarBackground ? 'true' : 'false'}" aria-label="${option.label}" title="${option.label}" style="background-image: ${option.css}"></button>
+                `).join('')}
+              </div>
             </div>
 
             <div class="profile-actions">
@@ -7939,11 +8038,28 @@ function renderAppContent(appId, mode = 'normal') {
 
       const editForm = document.getElementById('profileEditForm');
       const avatarUrlInput = editForm.querySelector('input[name="avatar_url"]');
+      const avatarBackgroundInput = editForm.querySelector('input[name="avatar_background"]');
+      const updateAvatarPreviews = () => {
+        const backgroundCss = getAvatarBackgroundCss(avatarBackgroundInput.value);
+        editForm.querySelectorAll('.avatar-option img').forEach((image) => {
+          image.style.backgroundImage = backgroundCss;
+        });
+      };
       editForm.querySelectorAll('.avatar-option').forEach((button) => {
         button.addEventListener('click', () => {
           editForm.querySelectorAll('.avatar-option').forEach((node) => node.classList.remove('selected'));
           button.classList.add('selected');
           avatarUrlInput.value = button.dataset.avatarUrl;
+        });
+      });
+      editForm.querySelectorAll('.avatar-background-option').forEach((button) => {
+        button.addEventListener('click', () => {
+          editForm.querySelectorAll('.avatar-background-option').forEach((node) => {
+            node.classList.toggle('selected', node === button);
+            node.setAttribute('aria-checked', String(node === button));
+          });
+          avatarBackgroundInput.value = getAvatarBackgroundKey(button.dataset.avatarBackground);
+          updateAvatarPreviews();
         });
       });
       editForm.addEventListener('submit', handleProfileEditSubmit);
@@ -7972,7 +8088,7 @@ function renderAppContent(appId, mode = 'normal') {
 
           <div class="profile-avatar-wrap">
             <div class="profile-avatar-ring">
-              <div class="profile-avatar-photo" style="background-image: url('${avatarUrl}')"></div>
+              <div class="profile-avatar-photo" style="${getAvatarStyle(avatarUrl, avatarBackground)}"></div>
             </div>
           </div>
 
@@ -9640,6 +9756,16 @@ function renderAppContent(appId, mode = 'normal') {
           const dashboardData = await essentialsPromise();
           const discussions = await loadActiveDiscussions();
           await loadModeratorQueue();
+          if (notificationMoneytreeTarget) {
+            const target = notificationMoneytreeTarget;
+            notificationMoneytreeTarget = null;
+            if (discussions.some(discussion => discussion.id === target.target_id)) {
+              moneytreeState.selectedDiscussionId = target.target_id;
+              await loadSelectedDiscussionFeed(target.target_id);
+            } else {
+              moneytreeState.submitError = 'This discussion is no longer available.';
+            }
+          }
           renderDashboard(dashboardData || {}, discussions);
           return dashboardData || {};
         } catch (error) {
@@ -9720,6 +9846,7 @@ function renderAppContent(appId, mode = 'normal') {
           <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="owner" aria-pressed="false"><span aria-hidden="true">◈</span> Balance adjustments</button>
           <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="polls" aria-pressed="false"><span aria-hidden="true">▥</span> Civic polls</button>
           <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="newsroom" aria-pressed="false"><span aria-hidden="true">▣</span> News publishing</button>
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="announcements" aria-pressed="false"><span aria-hidden="true">✉</span> Mass notifications</button>
         </nav>
 
         <div class="moneytree-panel moneytree-discussion-panel moderator-subpage-panel" data-moderator-subpage="queue">
@@ -9739,6 +9866,12 @@ function renderAppContent(appId, mode = 'normal') {
           <div id="moderatorCitizensState" aria-live="polite"></div>
         </div>
 
+        <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="announcements">
+          <div class="moneytree-panel-header">
+            <div><span class="moderator-panel-kicker">Owner tool</span><h4>Mass notifications</h4><p>Send a text announcement to every current citizen account.</p></div>
+          </div>
+          <div id="moderatorAnnouncementState" aria-live="polite"></div>
+        </div>
         <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="owner">
           <div class="moneytree-panel-header">
             <div><span class="moderator-panel-kicker">Owner tool</span><h4>Balance adjustments</h4><p>Record an adjustment to a citizen's balance.</p></div>
@@ -9767,6 +9900,7 @@ function renderAppContent(appId, mode = 'normal') {
     const queueCount = document.getElementById('moderatorQueueCount');
     const ownerState = document.getElementById('moderatorOwnerState');
     const citizensState = document.getElementById('moderatorCitizensState');
+    const announcementPanel = document.getElementById('moderatorAnnouncementState');
     const pollState = document.getElementById('moderatorPollState');
     const newsroomStateEl = document.getElementById('moderatorNewsroomState');
 
@@ -10558,6 +10692,79 @@ function renderAppContent(appId, mode = 'normal') {
       }
     };
 
+    const renderAnnouncementPanel = () => {
+      const state = moderatorAppState.announcement;
+      if (!moderatorAppState.ownerAccess) {
+        announcementPanel.innerHTML = '<div class="moneytree-empty-state"><strong>Owner access required.</strong><p>Only the project owner may send announcements to all citizens.</p></div>';
+        return;
+      }
+      announcementPanel.innerHTML = `
+        ${state.error ? `<div class="moneytree-discussion-message error" role="alert">${escapeHtml(state.error)}</div>` : ''}
+        ${state.message ? `<div class="moneytree-discussion-message success" role="status">${escapeHtml(state.message)}</div>` : ''}
+        ${state.preview ? `
+          <div class="moderator-announcement-preview">
+            <span class="moderator-panel-kicker">Preview · All current citizens</span>
+            <h3>${escapeHtml(state.title)}</h3><p>${escapeHtml(state.body)}</p>
+          </div>
+          <p class="moderator-announcement-help">This message will appear in every current citizen’s in-game inbox, including players who are offline.</p>
+          <div class="moneytree-review-actions">
+            <button type="button" class="secondary-button" data-action="announcement-edit" ${state.busy ? 'disabled' : ''}>Edit message</button>
+            <button type="button" class="moneytree-review-button approve" data-action="announcement-send" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Sending…' : 'Send to all citizens'}</button>
+          </div>
+        ` : `
+          <form id="moderatorAnnouncementForm" class="moderator-announcement-form">
+            <label class="moneytree-review-label" for="announcement-title">Title</label>
+            <input id="announcement-title" name="title" class="moneytree-review-reason" maxlength="120" required value="${escapeHtml(state.title)}" placeholder="e.g. Beta update">
+            <label class="moneytree-review-label" for="announcement-body">Message</label>
+            <textarea id="announcement-body" name="body" class="moneytree-review-reason" rows="6" maxlength="2000" required placeholder="Write your announcement…">${escapeHtml(state.body)}</textarea>
+            <span class="moderator-announcement-help">Up to 120 characters for the title and 2,000 for the message.</span>
+            <button type="submit" class="moneytree-review-button approve">Preview announcement</button>
+          </form>
+        `}
+      `;
+      const form = announcementPanel.querySelector('form');
+      form?.addEventListener('input', () => {
+        state.title = form.elements.title.value;
+        state.body = form.elements.body.value;
+        state.requestId = null;
+        state.error = '';
+        state.message = '';
+      });
+      form?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        state.title = form.elements.title.value.trim();
+        state.body = form.elements.body.value.trim();
+        if (!state.title || !state.body) { state.error = 'Enter a title and message.'; renderAnnouncementPanel(); return; }
+        state.preview = true;
+        state.message = '';
+        state.error = '';
+        renderAnnouncementPanel();
+      });
+    };
+
+    const sendAnnouncement = async () => {
+      const state = moderatorAppState.announcement;
+      if (!moderatorAppState.ownerAccess || !state.preview || state.busy) return;
+      state.busy = true;
+      state.error = '';
+      state.requestId ||= globalThis.crypto.randomUUID();
+      renderAnnouncementPanel();
+      try {
+        const { error } = await getAuthClient().rpc('owner_send_announcement', {
+          p_title: state.title, p_body: state.body, p_request_id: state.requestId,
+        });
+        if (error) throw error;
+        Object.assign(state, { title: '', body: '', preview: false, requestId: null, message: 'Announcement sent to all current citizen accounts.' });
+        void window.TyrannyNotifications?.refresh();
+      } catch (error) {
+        state.error = 'The send could not be confirmed. Retry to check the same announcement without sending a duplicate.';
+        console.error('Announcement send failed:', error);
+      } finally {
+        state.busy = false;
+        renderAnnouncementPanel();
+      }
+    };
+
     const renderCitizenDirectory = () => {
       const state = moderatorAppState.citizenDirectory;
       if (!moderatorAppState.ownerAccess) {
@@ -10582,6 +10789,15 @@ function renderAppContent(appId, mode = 'normal') {
               <div><span>Registered</span><strong>${selected.registration_date ? escapeHtml(new Date(selected.registration_date).toLocaleDateString()) : 'Unavailable'}</strong></div>
             </div>
             <button type="button" class="moneytree-review-button approve" data-action="directory-adjust-balance">Adjust balance</button>
+            <details class="moderator-delete-panel">
+              <summary>Permanently delete account</summary>
+              <p>This removes the login and personal game records. Shared content and permanent Store history can block deletion. Owner accounts are protected.</p>
+              <label for="directory-delete-reason">Reason</label>
+              <textarea id="directory-delete-reason" class="moneytree-review-reason" placeholder="Explain why this account should be deleted" ${state.deleting ? 'disabled' : ''}></textarea>
+              <label for="directory-delete-confirmation">Type DELETE ${escapeHtml(selected.citizen_id)} to confirm</label>
+              <input id="directory-delete-confirmation" class="moneytree-review-reason" autocomplete="off" ${state.deleting ? 'disabled' : ''}>
+              <button type="button" class="moneytree-review-button reject" data-action="directory-delete" ${state.deleting ? 'disabled' : ''}>${state.deleting ? 'Deleting…' : 'Delete account permanently'}</button>
+            </details>
           </section>
         ` : `
           <div class="moderator-directory-list">
@@ -10604,6 +10820,7 @@ function renderAppContent(appId, mode = 'normal') {
     };
 
     const loadCitizenDirectory = async () => {
+      if (!moderatorAppState.ownerAccess || moderatorAppState.citizenDirectory.deleting) return;
       const state = moderatorAppState.citizenDirectory;
       const token = ++state.requestToken;
       state.loading = true; state.error = null; state.selectedId = null; state.rows = [];
@@ -10822,6 +11039,7 @@ function renderAppContent(appId, mode = 'normal') {
 
     const refreshOwnerPanel = async () => {
       await loadOwnerAccessForApp();
+      renderAnnouncementPanel();
       renderOwnerBalancePanel();
       renderCitizenDirectory();
       renderModeratorPollPanel();
@@ -11173,6 +11391,13 @@ function renderAppContent(appId, mode = 'normal') {
     };
     body.addEventListener('input', body.moderatorDraftHandler);
     body.moderatorActionHandler = async (event) => {
+        if (event.target.closest('[data-action="announcement-edit"]')) {
+          if (!moderatorAppState.announcement.busy) { moderatorAppState.announcement.preview = false; renderAnnouncementPanel(); }
+          return;
+        }
+        if (event.target.closest('[data-action="announcement-send"]')) {
+          await sendAnnouncement(); return;
+        }
         const subpageButton = event.target.closest('[data-action="moderator-subpage"]');
         if (subpageButton) {
           const nextSubpage = subpageButton.getAttribute('data-subpage');
@@ -11185,6 +11410,32 @@ function renderAppContent(appId, mode = 'normal') {
         }
 
         const directory = moderatorAppState.citizenDirectory;
+        if (event.target.closest('[data-action="directory-delete"]')) {
+          const citizen = directory.rows.find((row) => row.citizen_id === directory.selectedId);
+          if (!citizen || directory.deleting || !moderatorAppState.ownerAccess) return;
+          const confirmation = citizensState.querySelector('#directory-delete-confirmation').value;
+          const reason = citizensState.querySelector('#directory-delete-reason').value.trim();
+          if (confirmation !== 'DELETE ' + citizen.citizen_id || reason.length < 5) {
+            directory.error = 'Enter a reason of at least five characters and type the exact deletion confirmation.';
+            renderCitizenDirectory(); return;
+          }
+          directory.deleting = true; directory.error = null; renderCitizenDirectory();
+          try {
+            const { error } = await getAuthClient().rpc('owner_delete_citizen', {
+              p_citizen_id: citizen.citizen_id, p_confirmation: confirmation, p_reason: reason,
+            });
+            if (error) throw error;
+            directory.deleting = false;
+            clearOwnerCitizenLookup();
+            await loadCitizenDirectory();
+          } catch (error) {
+            directory.error = error?.message || 'Unable to delete the account. Refresh the list before trying again.';
+          } finally {
+            directory.deleting = false; renderCitizenDirectory();
+          }
+          return;
+        }
+        if (directory.deleting && event.target.closest('[data-moderator-subpage="citizens"]')) return;
         if (event.target.closest('[data-action="directory-search"]')) {
           directory.offset = 0; await loadCitizenDirectory(); return;
         }
@@ -11595,6 +11846,7 @@ function renderAppContent(appId, mode = 'normal') {
     body.addEventListener('click', body.moderatorActionHandler);
 
     syncModeratorSubpageVisibility();
+    renderAnnouncementPanel();
     loadModeratorQueueForApp();
     refreshOwnerPanel();
     return;
@@ -11863,6 +12115,13 @@ function renderAppContent(appId, mode = 'normal') {
           : [];
 
         localNewsState.articles = await Promise.all(rawArticles.map((article) => resolveLocalNewsArticleForDisplay(article, supabase)));
+        if (notificationNewsTarget) {
+          if (!localNewsState.articles.some(article => article.id === notificationNewsTarget)) {
+            localNewsState.detailOpen = false;
+            localNewsState.error = 'This story is no longer available.';
+          }
+          notificationNewsTarget = null;
+        }
 
         if (!localNewsState.activeArticleId || !localNewsState.articles.some((article) => article.id === localNewsState.activeArticleId)) {
           localNewsState.activeArticleId = localNewsState.articles[0]?.id || null;
@@ -11897,10 +12156,7 @@ function renderAppContent(appId, mode = 'normal') {
     body.innerHTML = `
       <div class="news-card">
         <div class="mylife-grid">
-          <div class="info-row"><span>Monarchic reform</span><span>Passed 1893</span></div>
-          <div class="info-row"><span>Civic archive</span><span>North wing</span></div>
-          <div class="info-row"><span>Timeline</span><span>1912-1958</span></div>
-          <div class="info-row"><span>Featured chapter</span><span>Urban resilience</span></div>
+          <div class="info-row"><span>History is yet to be made</span></div>
         </div>
       </div>
     `;
@@ -11919,7 +12175,7 @@ function renderAppContent(appId, mode = 'normal') {
 
 function openApp(appId, mode = 'normal') {
   const appWindow = ensureAppWindow(appId);
-  const shouldRefreshApp = appId === 'moderator' || appId === 'voting' || appId === 'associates' || appId === 'assetmap' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
+  const shouldRefreshApp = appId === 'tutorial' || appId === 'moderator' || appId === 'voting' || appId === 'associates' || appId === 'assetmap' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
 
   if (shouldRefreshApp) {
     renderAppContent(appId, mode);
@@ -11938,6 +12194,7 @@ function openApp(appId, mode = 'normal') {
   notificationCenter.classList.add('hidden');
   floatingHome.style.display = 'grid';
   lockVisible = false;
+  window.TyrannyNotifications?.render();
 }
 
 function returnHome() {
@@ -11948,10 +12205,11 @@ function returnHome() {
   homeScreen.classList.remove('hidden');
   lockScreen.classList.add('hidden');
   floatingHome.style.display = 'none';
+  window.TyrannyNotifications?.render();
 }
 
 function toggleNotifications() {
-  notificationCenter.classList.toggle('hidden');
+  window.TyrannyNotifications?.toggle();
 }
 
 function setAuthMessage(message, type = '') {
@@ -12033,6 +12291,8 @@ function generateCitizenName() {
 function initializeAvatarPicker() {
   const grid = document.getElementById('avatarPickerGrid');
   const hiddenInput = document.getElementById('citizenAvatar');
+  const backgroundInput = document.getElementById('citizenAvatarBackground');
+  const backgroundGrid = document.getElementById('avatarBackgroundPicker');
   if (!grid || !hiddenInput) {
     return;
   }
@@ -12048,6 +12308,26 @@ function initializeAvatarPicker() {
   if (!hiddenInput.value) {
     hiddenInput.value = './assets/avatars/aurelia-voss.svg';
   }
+
+  const updatePreviews = () => {
+    const backgroundCss = getAvatarBackgroundCss(backgroundInput?.value);
+    grid.querySelectorAll('.avatar-option img').forEach((image) => {
+      image.style.backgroundImage = backgroundCss;
+    });
+  };
+
+  backgroundGrid?.querySelectorAll('.avatar-background-option').forEach((button) => {
+    button.addEventListener('click', () => {
+      backgroundGrid.querySelectorAll('.avatar-background-option').forEach((node) => {
+        node.classList.toggle('selected', node === button);
+        node.setAttribute('aria-checked', String(node === button));
+      });
+      if (backgroundInput) backgroundInput.value = getAvatarBackgroundKey(button.dataset.avatarBackground);
+      updatePreviews();
+    });
+  });
+
+  updatePreviews();
 }
 
 async function checkCitizenRecord(session) {
@@ -12059,7 +12339,7 @@ async function checkCitizenRecord(session) {
   try {
     const { data, error } = await supabase
       .from('citizens')
-      .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, political_party, registration_date, created_at')
+      .select('id, citizen_id, auth_user_id, public_name, avatar_type, avatar_url, avatar_background, political_party, registration_date, created_at')
       .eq('auth_user_id', session.user.id)
       .maybeSingle();
 
@@ -12182,6 +12462,7 @@ async function handleAuthSession() {
     }
 
     if (!session) {
+      window.TyrannyNotifications?.stop();
       diagnostics.sessionExists = false;
       diagnostics.userId = null;
       showAuthView('login');
@@ -12246,6 +12527,7 @@ async function handleAuthSession() {
     setAuthMessage('', '');
     authState.initializing = false;
     authState.ready = true;
+    window.TyrannyNotifications?.start(profileState.citizen?.id);
   } catch (error) {
     console.error('session handling failed', error);
     const diagnostics = window.TYRANNY_AUTH_DIAGNOSTICS || (window.TYRANNY_AUTH_DIAGNOSTICS = {});
@@ -12435,6 +12717,7 @@ async function handleCitizenSetup(event) {
   const firstName = document.getElementById('citizenFirstName').value.trim();
   const lastName = document.getElementById('citizenLastName').value.trim();
   const avatarUrl = document.getElementById('citizenAvatar').value || './assets/avatars/aurelia-voss.svg';
+  const avatarBackground = getAvatarBackgroundKey(document.getElementById('citizenAvatarBackground')?.value);
   const avatarType = 'builtin';
   const party = document.getElementById('citizenParty').value || 'Independent';
 
@@ -12459,6 +12742,7 @@ async function handleCitizenSetup(event) {
         public_name: publicName,
         avatar_type: avatarType,
         avatar_url: avatarUrl,
+        avatar_background: avatarBackground,
         political_party: party,
       },
     });
@@ -12633,7 +12917,14 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        moderatorAppState.announcement = { title: '', body: '', preview: false, busy: false, requestId: null, error: '', message: '' };
+        window.TyrannyNotifications?.stop();
+        notificationMoneytreeTarget = null;
+        notificationNewsTarget = null;
         clearOwnerCitizenLookup();
+        moderatorAppState.citizenDirectory.requestToken++;
+        moderatorAppState.citizenDirectory.rows = [];
+        moderatorAppState.citizenDirectory.selectedId = null;
         moderatorAppState.rejectionDrafts = {};
         moderatorAppState.queue = [];
         moderatorAppState.ownerAccess = false;
@@ -12657,7 +12948,7 @@ function initializeAuthUi() {
 }
 
 function toggleNotifications() {
-  notificationCenter.classList.toggle('hidden');
+  window.TyrannyNotifications?.toggle();
 }
 
 function openSettingsMenu() {
@@ -12770,7 +13061,7 @@ function initializePhone() {
 
   document.getElementById('notificationToggle').addEventListener('click', toggleNotifications);
   document.getElementById('closeNotifications').addEventListener('click', () => {
-    notificationCenter.classList.add('hidden');
+    window.TyrannyNotifications?.close();
   });
 
   const lockAvatar = document.getElementById('lockAvatar');
