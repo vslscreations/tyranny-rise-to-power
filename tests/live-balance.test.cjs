@@ -31,6 +31,15 @@ function fixture(refresh = async () => 100) {
 }
 const citizen = { id:'citizen-a', auth_user_id:'user-a' };
 
+test('XP events refresh progress on the existing private channel, and money only on a level reward', async () => {
+  const f=fixture();let xp=0;
+  f.context.TyrannyLeveling={invalidate:()=>xp++,refresh:()=>xp++};
+  f.api.start(citizen);const receive=f.channels[0].listeners.xp_changed;
+  receive({payload:{balance_changed:false}});await tick();assert.equal(xp,1);assert.equal(f.calls.length,0);
+  receive({payload:{balance_changed:true}});await tick();assert.equal(xp,2);assert.equal(f.calls.length,1);assert.equal(f.badges(),1);
+  assert.equal(f.channels.length,1);f.api.stop();receive({payload:{balance_changed:true}});await tick();assert.equal(xp,2);
+});
+
 test('creator alerts reuse the connection without fetching the balance', async () => {
   const f=fixture(); let alerts=0;
   f.context.TyrannyCreatorNotifications={refresh:()=>{alerts++;}};

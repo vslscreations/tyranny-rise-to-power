@@ -1,6 +1,6 @@
 /* Read-only XP presentation. All thresholds, totals and levels come from Supabase. */
 window.TyrannyLeveling = (() => {
-  let citizenId=null, generation=0, request=null, progress=null, status='idle';
+  let citizenId=null, generation=0, request=null, progress=null, status='idle', dirty=false;
   const node=id=>document.getElementById(id);
   const integer=value=>{
     if(typeof value!=='string'||!/^\d+$/.test(value))throw Error('Invalid XP value');
@@ -19,7 +19,10 @@ window.TyrannyLeveling = (() => {
     }
     const percent=Number(data.progress_percent);
     if(!Number.isFinite(percent)||percent<0||percent>100)throw Error('Invalid progress percentage');
-    return {level:data.level,total,into,next,needed,remaining,percent:next===null?0:percent};
+    const reward=data.next_level_reward_amount;
+    const rewardLabel=next!==null&&typeof reward==='string'&&/^\d+(\.\d{1,2})?$/.test(reward)&&Number(reward)>0
+      ? `$${Number(reward).toLocaleString()} level-up reward` : null;
+    return {level:data.level,total,into,next,needed,remaining,percent:next===null?0:percent,rewardLabel};
   }
   function render() {
     const level=node('playerLevel'),total=node('playerXpTotal'),bar=node('playerXpProgress'),hint=node('playerXpHint');
@@ -30,6 +33,7 @@ window.TyrannyLeveling = (() => {
       total.textContent=`${progress.total.toLocaleString()} XP`;
       bar.value=progress.percent;
       hint.textContent=progress.next===null?'Next level coming soon':`${progress.into.toLocaleString()} / ${progress.needed.toLocaleString()} XP to Level ${progress.next}`;
+      if(progress.rewardLabel)hint.textContent+=` · ${progress.rewardLabel}`;
       description=`Level ${progress.level}, ${progress.total.toLocaleString()} total XP. ${progress.next===null?'Next level is not configured yet.':`${progress.remaining.toLocaleString()} XP remaining to Level ${progress.next}.`}`;
     }else{
       level.textContent='Level —';bar.value=0;
@@ -41,7 +45,7 @@ window.TyrannyLeveling = (() => {
     node('profileWidget')?.setAttribute('aria-label',`Open MyLife profile. ${description}`);
   }
   function reset() {
-    generation++;citizenId=null;request=null;progress=null;status='idle';render();
+    generation++;citizenId=null;request=null;progress=null;status='idle';dirty=false;render();
   }
   function refresh() {
     if(!citizenId)return Promise.resolve();
@@ -60,7 +64,7 @@ window.TyrannyLeveling = (() => {
         if(epoch!==generation)return;
         progress=null;status='error';
       }finally{
-        if(epoch===generation){request=null;render();}
+        if(epoch===generation){request=null;render();if(dirty){dirty=false;void refresh();}}
       }
     })();
     return request;
@@ -71,5 +75,9 @@ window.TyrannyLeveling = (() => {
     if(citizenId!==id){reset();citizenId=id;}
     return refresh();
   }
-  return {start,refresh,reset};
+  function invalidate() {
+    if(request){dirty=true;return request;}
+    return refresh();
+  }
+  return {start,refresh,invalidate,reset};
 })();

@@ -59,6 +59,13 @@ window.TyrannyLiveBalance = (() => {
     }).on('broadcast', { event: 'creator_notification' }, () => {
       if (current !== generation) return;
       void window.TyrannyCreatorNotifications?.refresh();
+    }).on('broadcast', { event: 'xp_changed' }, message => {
+      if (current !== generation) return;
+      void window.TyrannyLeveling?.invalidate();
+      if (message?.payload?.balance_changed === true) {
+        void refresh();
+        void window.TyrannyNotifications?.refreshBadge();
+      }
     }).subscribe(status => {
       if (current !== generation) return;
       if (status === 'SUBSCRIBED') {
@@ -66,9 +73,11 @@ window.TyrannyLiveBalance = (() => {
         // Covers credits made during initial loading, disconnection, or sleep.
         void refresh();
         void window.TyrannyCreatorNotifications?.refresh();
+        void window.TyrannyLeveling?.refresh();
       } else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status) && !fallbackTimer) {
         void refresh();
-        fallbackTimer = setInterval(() => { void refresh(); }, 60000);
+        void window.TyrannyLeveling?.refresh();
+        fallbackTimer = setInterval(() => { void refresh(); void window.TyrannyLeveling?.refresh(); }, 60000);
       }
     });
   }
