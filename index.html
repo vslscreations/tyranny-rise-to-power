@@ -161,6 +161,9 @@
                 <div class="widget-copy">
                   <span class="widget-name" id="profileName">Aurelia Voss</span>
                   <span class="widget-role" id="profileRole">Profile unavailable</span>
+                  <span class="player-xp-summary"><span id="playerLevel">Level —</span><span id="playerXpTotal">— XP</span></span>
+                  <progress id="playerXpProgress" class="player-xp-progress" value="0" max="100" aria-label="Citizen XP progress" aria-valuetext="XP progress loading."></progress>
+                  <span class="player-xp-hint" id="playerXpHint">Your citizen progression</span>
                 </div>
               </button>
 
@@ -306,6 +309,7 @@
     <script defer src="./creator-notifications.js"></script>
     <script defer src="./activity-center.js"></script>
     <script defer src="./live-balance.js"></script>
+    <script defer src="./leveling.js"></script>
     <script defer src="./tutorials.js"></script>
     <script defer src="./onboarding.js"></script>
     <script defer src="./app.js"></script>

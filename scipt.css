@@ -915,6 +915,15 @@ button {
   gap: 6px;
 }
 
+.profile-widget .widget-copy { flex: 1; min-width: 0; }
+.profile-widget .avatar { flex-shrink: 0; }
+.player-xp-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; color: #d6b765; font-size: .69rem; font-weight: 700; }
+.player-xp-progress { display: block; appearance: none; width: 100%; height: 5px; border: 0; border-radius: 99px; overflow: hidden; background: rgba(214, 183, 101, .14); color: #d6b765; }
+.player-xp-progress::-webkit-progress-bar { border-radius: 99px; background: rgba(214, 183, 101, .14); }
+.player-xp-progress::-webkit-progress-value { border-radius: 99px; background: linear-gradient(90deg, #a88136, #e6cc87); }
+.player-xp-progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(90deg, #a88136, #e6cc87); }
+.player-xp-hint { color: rgba(245, 231, 202, .6); font-size: .6rem; line-height: 1.4; }
+
 .mylife-header-row,
 .mylife-profile-header {
   display: flex;

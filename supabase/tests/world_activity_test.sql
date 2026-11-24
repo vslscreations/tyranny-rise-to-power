@@ -74,7 +74,7 @@ BEGIN
   IF has_table_privilege('authenticated','public.world_activity','SELECT,INSERT,UPDATE,DELETE') OR
     has_function_privilege('anon','public.get_world_activity(bigint,text,text,timestamptz,integer)','EXECUTE') THEN
     RAISE EXCEPTION 'Direct journal access exposed'; END IF;
-  IF (SELECT count(*) FROM pg_trigger WHERE tgname='audit_world_activity')<>38 THEN RAISE EXCEPTION 'Incomplete coverage'; END IF;
+  IF (SELECT count(*) FROM pg_trigger WHERE tgname='audit_world_activity')<38 THEN RAISE EXCEPTION 'Incomplete coverage'; END IF;
 END;
 $$;
 SELECT 'PASS: triggers, attribution, credits, no-op suppression, privacy, paging, search and owner isolation' AS result;

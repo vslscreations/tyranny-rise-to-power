@@ -5267,6 +5267,7 @@ async function loadCitizenProfile(knownCitizen = null) {
 
   if (!supabase || !session?.user) {
     player.balance = 'Unavailable';
+    window.TyrannyLeveling?.reset();
     renderPlayerDetails();
     return null;
   }
@@ -5290,6 +5291,7 @@ async function loadCitizenProfile(knownCitizen = null) {
 
   if (!citizen) {
     profileState.citizen = null;
+    window.TyrannyLeveling?.reset();
     profileState.private = null;
     player.balance = 'Unavailable';
     profileState.privateLoadError = 'No citizen record is linked to this account.';
@@ -5318,6 +5320,7 @@ async function loadCitizenProfile(knownCitizen = null) {
   }
 
   profileState.citizen = citizen;
+  void window.TyrannyLeveling?.start(citizen.id);
   if (privateRecord && balanceVersion !== currentBalanceVersion && profileState.private?.balance != null) {
     privateRecord.balance = profileState.private.balance;
   }
@@ -12579,6 +12582,7 @@ async function bootstrapAuthSession() {
     }
 
     if (!session) {
+      window.TyrannyLeveling?.reset();
       window.TyrannyActivityCenter?.reset();
       window.TyrannyCreatorNotifications?.stop();
       window.TyrannyLiveBalance?.stop();
@@ -13024,6 +13028,7 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        window.TyrannyLeveling?.reset();
         window.TyrannyActivityCenter?.reset();
         window.TyrannyCreatorNotifications?.stop();
         window.TyrannyLiveBalance?.stop();
@@ -13066,6 +13071,7 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (profileState.citizen?.auth_user_id !== session?.user?.id) window.TyrannyLeveling?.reset();
         // Supabase can emit SIGNED_IN on tab focus. Refreshing a token does not
         // require downloading the profile or rebuilding the game screen.
         if (!authState.ready || profileState.citizen?.auth_user_id !== session?.user?.id) {
