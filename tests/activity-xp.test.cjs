@@ -133,4 +133,28 @@ test('activity XP and exactly-once level cash in isolated PostgreSQL',async t=>{
     }finally{await db.exec("RESET ROLE;SELECT set_config('app.level_reward_credit','off',false);REVOKE SELECT,UPDATE ON citizen_private FROM authenticated");}
     assert.equal(await balance(b),225);
   });
+  await t.test('MoneyTree rate update awards 5 XP only on new approvals and preserves prior awards',async()=>{
+    const beforeXp=await xp(b),beforeBalance=await balance(b);
+    const beforeCount=await value('SELECT count(*)::integer AS value FROM citizen_xp_ledger');
+    await db.exec(read('20261130000046_moneytree_five_xp.sql'));
+    assert.equal(await xp(b),beforeXp);assert.equal(await balance(b),beforeBalance);
+    assert.equal(await value('SELECT count(*)::integer AS value FROM citizen_xp_ledger'),beforeCount);
+    assert.equal(await value("SELECT xp_amount::integer AS value FROM xp_activity_rules WHERE activity_key='moneytree_approved'"),5);
+    assert.equal(await value("SELECT bool_and(xp_amount=1 AND enabled) AS value FROM xp_activity_rules WHERE activity_key NOT IN ('moneytree_approved','fixture')"),true);
+    const submission=await value('INSERT INTO moneytree_contributions(citizen_id) VALUES($1) RETURNING id AS value',[b]);
+    assert.equal(await xp(b),'200');
+    await db.query("UPDATE moneytree_contributions SET moderation_state='approved' WHERE id=$1",[submission]);
+    assert.equal(await xp(b),'205');assert.equal(await balance(b),225);
+    // Even the old 1-XP submission cannot be topped up through re-approval.
+    await db.query("UPDATE moneytree_contributions SET moderation_state='rejected' WHERE citizen_id=$1",[b]);
+    await db.query("UPDATE moneytree_contributions SET moderation_state='approved' WHERE citizen_id=$1",[b]);
+    assert.equal(await xp(b),'205');
+    assert.equal(await value("SELECT count(*)::integer AS value FROM citizen_xp_ledger WHERE activity_key='moneytree_approved' AND amount=1"),1);
+    await db.exec("UPDATE xp_activity_rules SET xp_amount=91 WHERE activity_key='fixture'");await award(b,'near-moneytree-level');
+    assert.equal(await xp(b),'296');
+    await db.query("INSERT INTO moneytree_contributions(citizen_id,moderation_state) VALUES($1,'approved')",[b]);
+    assert.equal(await xp(b),'301');assert.equal(await balance(b),325);
+    assert.equal(await value("SELECT citizen_level_state($1)->>'level' AS value",[b]),'4');
+    await db.query('INSERT INTO social_posts(citizen_id) VALUES($1)',[b]);assert.equal(await xp(b),'302');
+  });
 });
