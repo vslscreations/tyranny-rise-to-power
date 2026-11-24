@@ -113,6 +113,7 @@ window.TyrannyNotifications = (() => {
   }
   function toggle() {
     if (!panel().classList.contains('hidden')) { close(); return; }
+    window.TyrannyCreatorNotifications?.close(false);
     lastFocus = document.activeElement;
     panel().classList.remove('hidden');
     render();

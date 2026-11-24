@@ -19,7 +19,7 @@ function fixture(refresh = async () => 100) {
     TyrannyNotifications: { refreshBadge: () => { badges++; } },
     getAuthClient: () => ({
       channel(topic, options) {
-        const channel = { topic, options, on(type, filter, fn) { this.receive=fn; return this; }, subscribe(fn) { this.status=fn; return this; } };
+        const channel = { topic, options, listeners: {}, on(type, filter, fn) { this.listeners[filter.event]=fn; if(filter.event==='balance_changed')this.receive=fn; return this; }, subscribe(fn) { this.status=fn; return this; } };
         channels.push(channel); return channel;
       },
       removeChannel: channel => { removed.push(channel); return Promise.resolve(); },
@@ -30,6 +30,13 @@ function fixture(refresh = async () => 100) {
   return { context, api:context.TyrannyLiveBalance, events, channels, calls, removed, intervals, timeouts, badges:()=>badges };
 }
 const citizen = { id:'citizen-a', auth_user_id:'user-a' };
+
+test('creator alerts reuse the connection without fetching the balance', async () => {
+  const f=fixture(); let alerts=0;
+  f.context.TyrannyCreatorNotifications={refresh:()=>{alerts++;}};
+  f.api.start(citizen); f.channels[0].listeners.creator_notification(); await tick();
+  assert.equal(alerts,1); assert.equal(f.calls.length,0); assert.equal(f.channels.length,1);
+});
 
 test('credits immediately refresh a private recipient channel without idle polling', async () => {
   const f=fixture(); f.api.start(citizen); f.api.start(citizen);

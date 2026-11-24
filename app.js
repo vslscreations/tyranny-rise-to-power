@@ -9911,6 +9911,7 @@ function renderAppContent(appId, mode = 'normal') {
           <div><span>TYRANNY ADMINISTRATION</span><h2>Moderator workspace</h2><p>Manage submissions and community operations.</p></div>
         </header>
         <nav class="moderator-subpage-nav" aria-label="Moderator tools">
+          <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="activity" aria-pressed="false"><span aria-hidden="true">◷</span> Activity Center</button>
           <button type="button" class="secondary-button moderator-subpage-button active" data-action="moderator-subpage" data-subpage="queue" aria-pressed="true"><span aria-hidden="true">▤</span> Submission review</button>
           <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="citizens" aria-pressed="false"><span aria-hidden="true">♙</span> Citizen management</button>
           <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="owner" aria-pressed="false"><span aria-hidden="true">◈</span> Balance adjustments</button>
@@ -9919,6 +9920,7 @@ function renderAppContent(appId, mode = 'normal') {
           <button type="button" class="secondary-button moderator-subpage-button" data-action="moderator-subpage" data-subpage="announcements" aria-pressed="false"><span aria-hidden="true">✉</span> Mass notifications</button>
         </nav>
 
+        <div class="moneytree-panel moderator-subpage-panel" data-moderator-subpage="activity"><div id="moderatorActivityCenter"></div></div>
         <div class="moneytree-panel moneytree-discussion-panel moderator-subpage-panel" data-moderator-subpage="queue">
           <div class="moneytree-panel-header">
             <div><span class="moderator-panel-kicker">MoneyTree</span><h4>Submission review</h4><p>Review pending contributions and their context.</p></div>
@@ -11470,8 +11472,14 @@ function renderAppContent(appId, mode = 'normal') {
         if (subpageButton) {
           const nextSubpage = subpageButton.getAttribute('data-subpage');
           if (nextSubpage) {
+            const previousSubpage = moderatorAppState.currentSubpage;
             moderatorAppState.currentSubpage = nextSubpage;
             syncModeratorSubpageVisibility();
+            if (nextSubpage === 'activity') window.TyrannyActivityCenter?.mount(document.getElementById('moderatorActivityCenter'));
+            else {
+              window.TyrannyActivityCenter?.deactivate();
+              if (previousSubpage === 'activity') { void loadModeratorQueueForApp(); void refreshOwnerPanel(); }
+            }
             if (nextSubpage === 'citizens' && moderatorAppState.ownerAccess) void loadCitizenDirectory();
           }
           return;
@@ -11915,8 +11923,8 @@ function renderAppContent(appId, mode = 'normal') {
 
     syncModeratorSubpageVisibility();
     renderAnnouncementPanel();
-    loadModeratorQueueForApp();
-    refreshOwnerPanel();
+    if (moderatorAppState.currentSubpage === 'activity') window.TyrannyActivityCenter?.mount(document.getElementById('moderatorActivityCenter'));
+    else { window.TyrannyActivityCenter?.deactivate(); loadModeratorQueueForApp(); refreshOwnerPanel(); }
     return;
   }
 
@@ -12264,7 +12272,15 @@ function getCitizenTourContext() {
   };
 }
 
+function openCreatorNotificationTarget(item) {
+  if (!moderatorAppState.visible) return;
+  moderatorAppState.currentSubpage = item.kind === 'citizen' ? 'citizens' : 'queue';
+  openApp('moderator');
+}
+
 function openApp(appId, mode = 'normal') {
+  if (appId !== 'moderator') window.TyrannyActivityCenter?.deactivate();
+  window.TyrannyCreatorNotifications?.close(false);
   if (appId !== 'social') cleanupSocialChatRealtime();
   const appWindow = ensureAppWindow(appId);
   const shouldRefreshApp = appId === 'tutorial' || appId === 'moderator' || appId === 'voting' || appId === 'associates' || appId === 'assetmap' || !appWindow.dataset.initialized || appWindow.dataset.mode !== mode;
@@ -12294,6 +12310,7 @@ function openApp(appId, mode = 'normal') {
 }
 
 function returnHome() {
+  window.TyrannyActivityCenter?.deactivate();
   cleanupSocialChatRealtime();
   document.querySelectorAll('.app-window').forEach((windowNode) => {
     windowNode.classList.remove('active');
@@ -12562,6 +12579,8 @@ async function bootstrapAuthSession() {
     }
 
     if (!session) {
+      window.TyrannyActivityCenter?.reset();
+      window.TyrannyCreatorNotifications?.stop();
       window.TyrannyLiveBalance?.stop();
       window.TyrannyOnboarding?.stop();
       window.TyrannyNotifications?.stop();
@@ -12631,6 +12650,7 @@ async function bootstrapAuthSession() {
     authState.initializing = false;
     authState.ready = true;
     window.TyrannyNotifications?.start(profileState.citizen?.id);
+    window.TyrannyCreatorNotifications?.start(profileState.citizen?.id);
     window.TyrannyLiveBalance?.start(profileState.citizen);
     window.TyrannyOnboarding?.ready(getCitizenTourContext());
   } catch (error) {
@@ -13004,6 +13024,8 @@ function initializeAuthUi() {
       }
 
       if (event === 'SIGNED_OUT') {
+        window.TyrannyActivityCenter?.reset();
+        window.TyrannyCreatorNotifications?.stop();
         window.TyrannyLiveBalance?.stop();
         authBootstrapEpoch++;
         authBootstrapRequest = null;

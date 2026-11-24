@@ -56,12 +56,16 @@ window.TyrannyLiveBalance = (() => {
       if (current !== generation) return;
       void refresh();
       void window.TyrannyNotifications?.refreshBadge();
+    }).on('broadcast', { event: 'creator_notification' }, () => {
+      if (current !== generation) return;
+      void window.TyrannyCreatorNotifications?.refresh();
     }).subscribe(status => {
       if (current !== generation) return;
       if (status === 'SUBSCRIBED') {
         clearInterval(fallbackTimer); fallbackTimer = null;
         // Covers credits made during initial loading, disconnection, or sleep.
         void refresh();
+        void window.TyrannyCreatorNotifications?.refresh();
       } else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status) && !fallbackTimer) {
         void refresh();
         fallbackTimer = setInterval(() => { void refresh(); }, 60000);
